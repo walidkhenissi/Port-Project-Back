@@ -10,6 +10,7 @@ const {Merchant, CommissionValue, Commission, SalesTransaction, PaymentInfo} = r
 const boxesTransactionController = require("./boxesTransactionController");
 const fs = require("fs");
 const path = require("path");
+const PdfPrinter = require("pdfmake");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -297,8 +298,127 @@ router.checkPaymentInfo = async function (sale) {
     return sale;
 }
 
+
 router.post('/generateSalesReport', async (req, res) => {
-    let fileName = "pdfFile.pdf";
-    res.status(201).json(new Response(fileName));
+    const dataToReport = await router.getSalesReportData(req.body);
+    if (req.body.excelType)
+        router.generateExcelSalesReport(dataToReport, res);
+    else if (req.body.pdfType)
+        router.generatePDFSalesReport(dataToReport, res);
+    else
+        res.status(404).json(new Response({err: 'Error : File type not specified!'}, true));
 });
+
+router.getSalesReportData = async function (options) {
+    let criteria = {where: {}};
+    if (!tools.isFalsey(options.dateRule)) {
+        switch (options.dateRule) {
+            case 'equals' : {
+                criteria.where.date = new Date(options.startDate);
+                break;
+            }
+            case 'notEquals' : {
+                criteria.where.date = {'!': options.startDate};
+                break;
+            }
+            case 'lowerThan' : {
+                criteria.where.date = {'<=': options.startDate};
+                break;
+            }
+            case 'greaterThan' : {
+                criteria.where.date = {'>=': options.startDate};
+                break;
+            }
+            case 'between' : {
+                criteria.where.date = {'>=': options.startDate, '<=': options.endDate};
+                break;
+            }
+            default:
+                break;
+        }
+    }
+    if (options.producer)
+        criteria.where.shipOwnerId = options.producer;
+    let sales = await dao.find(criteria);
+    let availableSales = [];
+    for (const sale of sales) {
+        let _criteria = {where: {saleId: sale.id}};
+        if (!tools.isFalsey(options.merchant))
+            _criteria.where.merchantId = options.merchant;
+        if (!tools.isFalsey(options.article))
+            _criteria.where.articleId = options.article;
+        sale.saleTransactions = await salesTransactionDao.find(_criteria);
+        if (sale.saleTransactions && sale.saleTransactions.length)
+            availableSales.push(sale);
+    }
+    sales = availableSales;
+    return sales;
+}
+
+router.generatePDFSalesReport = async function (data, res) {
+    let titleRow = [];
+    titleRow.push([{text: 'text 0', fontSize: 22, alignment: 'center'},
+        [{text: 'text 1', fontSize: 22, alignment: 'center'},
+            {text: 'text 2', fontSize: 12, alignment: 'center'}],
+        {text: 'text 3', fontSize: 12, alignment: 'center'}
+    ]);
+    let docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [25, 25, 25, 25],
+        pageOrientation: 'landscape',
+        defaultStyle: {
+            fontSize: 5,
+            columnGap: 20
+        },
+        content: []
+    };
+    docDefinition.content.push('\n');
+    docDefinition.content.push({
+            columns: [
+
+                {
+                    table: {
+                        body: titleRow,
+                        widths: ['25%', '50%', '25%']
+                    },
+                }
+            ]
+        }
+    );
+    docDefinition.content.push('\n');
+    // var PdfPrinter = require('pdfmake');
+    var fonts = {
+        Roboto: {
+            normal: './assets/fonts/roboto/Roboto-Regular.ttf',
+            bold: './assets/fonts/roboto/Roboto-Bold.ttf',
+            italics: './assets/fonts/roboto/Roboto-Italic.ttf',
+            bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+        }
+    };
+
+    var PdfPrinter = require('pdfmake/src/printer');
+    var printer = new PdfPrinter(fonts);
+    var fs = require('fs');
+    var options = {
+        // ...
+    };
+    const path = require('path');
+    fileName = "pdfFile.pdf";
+    await tools.cleanTempDirectory(fs, path);
+    try {
+        var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+        pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
+            res.status(201).json(new Response(fileName));
+        });
+        pdfDoc.end();
+    } catch (err) {
+        console.log("=====================>err : " + JSON.stringify(err));
+        res.status(404).json(new Response(err, true));
+    }
+}
+
+router.generateExcelSalesReport = async function (data, res) {
+    res.status(404).json(new Response({err: 'Not yet implemented'}, true));
+}
+
 module.exports = router;
