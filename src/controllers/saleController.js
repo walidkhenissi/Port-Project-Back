@@ -323,11 +323,16 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
+    console.log("test option:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
             case 'equals' : {
-                criteria.where.date = new Date(options.startDate);
+               // criteria.where.date = new Date(options.startDate);
+               const startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
+                const endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
+                criteria.where.date = { '>=': startOfDay, '<=': endOfDay };
+                console.log("Critères pour equals :", criteria.where.date);
                 break;
             }
             case 'notEquals' : {
@@ -360,22 +365,13 @@ router.getSalesReportData = async function (options) {
             _criteria.where.merchantId = options.merchant;
         if (!tools.isFalsey(options.article))
             _criteria.where.articleId = options.article;
-       // sale.saleTransactions = await salesTransactionDao.find(_criteria);
-        sale.saleTransactions = await salesTransactionDao.find({
-            where: _criteria.where,
-            include: [
-                {
-                    model: Article, // Modèle Sequelize pour les articles
-                    as: 'article',  // Alias défini dans les associations
-                    attributes: ['name'] // Inclure uniquement le champ `name`
-                }
-            ]
-        });
+        sale.saleTransactions = await salesTransactionDao.find(_criteria);
 
         if (sale.saleTransactions && sale.saleTransactions.length)
             availableSales.push(sale);
     }
     sales = availableSales;
+    console.log("Critères finaux :", criteria);
     return sales;
 }
 
@@ -386,9 +382,10 @@ router.generatePDFSalesReport = async function (data, res) {
         {text: 'Date', fontSize: 12, alignment: 'center'},
         {text: 'Producteur', fontSize: 12, alignment: 'center'},
         {text: 'Article ', fontSize: 12, alignment: 'center' },
-        {text: 'Quantite Totale ', fontSize: 12, alignment: 'center' },
+        {text: 'Quantite  ', fontSize: 12, alignment: 'center' },
+        {text: 'Poid Net ', fontSize: 12, alignment: 'center' },
+        {text: 'Prix Total ', fontSize: 12, alignment: 'center' },
         {text: 'Comission Prod', fontSize: 12, alignment: 'center'},
-       // {text: 'Net', fontSize: 12, alignment: 'center'},
         {text: 'Commercant', fontSize: 12, alignment: 'center' },
         {text: 'Prix Unite', fontSize: 12, alignment: 'center' },
         {text: 'Commission Com', fontSize: 12, alignment: 'center' },
@@ -399,22 +396,18 @@ router.generatePDFSalesReport = async function (data, res) {
     for (const sale of data) {
         for (const transaction of sale.saleTransactions) {
             salesReportData.push([
-            { text: sale.date, fontSize: 12, alignment: 'center' },
-            { text: sale.producerName, fontSize: 12, alignment: 'center' },
-            { text: transaction.article ? transaction.article.name : 'Non spécifié', fontSize: 12, alignment: 'center' }, // Nom de l'article
-             { text: transaction.totalPrice, fontSize: 12, alignment: 'center' },
-             { text: sale.totalProducerCommission, fontSize: 12, alignment: 'center' },
-            //{ text: transaction.netWeight, fontSize: 12, alignment: 'center' },
-          //  { text: transaction.totalPrice, fontSize: 12, alignment: 'center' },
-                // { text: sale.merchant.name, fontSize: 12, alignment: 'center'},
-          { text: sale.merchantId, fontSize: 12, alignment: 'center' || 'N|A'},
-            { text: transaction.unitPrice, fontSize: 12, alignment: 'center' },
-            { text: sale.totalMerchantCommission, fontSize: 12, alignment: 'center' },
-            { text: sale.totalToPay, fontSize: 12, alignment: 'center' },
-            { text: sale.total, fontSize: 12, alignment: 'center' }
-
-
-
+            { text: sale.date, fontSize: 10, alignment: 'center' },
+            { text: sale.producerName, fontSize: 10, alignment: 'center' },
+            { text: transaction.article ? transaction.article.name : 'Non spécifié', fontSize: 10, alignment: 'center' },
+            { text: transaction.boxes, fontSize: 10, alignment: 'center' },
+            { text: transaction.netWeight, fontSize: 10, alignment: 'center' },
+            { text: transaction.totalPrice, fontSize: 10, alignment: 'center' },
+            { text: sale.totalProducerCommission, fontSize: 10, alignment: 'center' },
+            { text: transaction.merchant ? transaction.merchant.name:'Non spécifié', fontSize: 10, alignment: 'center'},
+            { text: transaction.unitPrice, fontSize: 10, alignment: 'center' },
+            { text: sale.totalMerchantCommission, fontSize: 10, alignment: 'center' },
+            { text: sale.totalToPay, fontSize: 10, alignment: 'center' },
+            { text: sale.total, fontSize: 10, alignment: 'center' }
             ]);
         }
     }
@@ -436,7 +429,7 @@ router.generatePDFSalesReport = async function (data, res) {
                         ...titleRow,
                         ...salesReportData
                     ],
-                    widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto','auto','auto','auto'],
+                    widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
                 },
                 layout: 'lightHorizontalLines',  // Style des lignes horizontales
             }
@@ -482,7 +475,7 @@ router.generatePDFSalesReport = async function (data, res) {
     try {
         var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
         pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
-            res.status(201).json(new Response(fileName));
+            res.status(201).json(new Response(fileName,path));
         });
         pdfDoc.end();
     } catch (err) {
@@ -499,19 +492,21 @@ router.generateExcelSalesReport = async function (data, res) {
     // Préparer les données
     let salesReportData = data.flatMap(sale =>
         sale.saleTransactions.map(transaction => ({
-            Date: sale.date,
-            Producteur: sale.producerName,
-            Article: transaction.article ? transaction.article.name : 'Non spécifié',
-            'Total Quantité' : transaction.totalPrice,
+            'Date': sale.date,
+            'Producteur': sale.producerName,
+            'Article': transaction.article ? transaction.article.name : 'Non spécifié',
+            'Quantité':transaction.boxes,
+            'Poid Net':transaction.netWeight,
+            'Prix Total' : transaction.totalPrice,
             'Commission Producteur': sale.totalProducerCommission,
-           // Net: transaction.netWeight,
-            Commerçant: sale.merchant.name,
+            'Commerçant': transaction.merchant ? transaction.merchant.name: 'Non spécifié',
             'Prix Unitaire': transaction.unitPrice,
             'Commission Commerçant': sale.totalMerchantCommission,
             'Total à Payer': sale.totalToPay,
             'Total Net': sale.total
         }))
     );
+
     const worksheet = XLSX.utils.json_to_sheet(salesReportData, { header: columns });
     // Ajouter les colonnes dans la feuille
     worksheet['!cols'] = columns.map(() => ({ wch: 20 }));
@@ -522,18 +517,15 @@ router.generateExcelSalesReport = async function (data, res) {
 // Définir le chemin du fichier
     const path = require('path');
     fileName = "excelFile.xlsx";
-    tempPath = path.join(__dirname, '../../files');
-    if (!fs.existsSync(tempPath)) {
-        fs.mkdirSync(tempPath, { recursive: true }); // Créez le répertoire s'il n'existe pas
+
+   const excelFile=tools.PDF_PATH;
+    if (!fs.existsSync(excelFile)) {
+        fs.mkdirSync(excelFile, { recursive: true }); // Créez le répertoire s'il n'existe pas
     }
-    const filePath = path.join(tempPath, fileName);
+    const filePath = path.join(excelFile,fileName);
     // Enregistrer le fichier Excel
         XLSX.writeFile(workbook, filePath);
-        res.status(201).json(  {success: true,
-        message: "Fichier Excel généré avec succès",
-        fileName,
-        filePath
-        });
+        res.status(201).json(new Response(fileName));
 } catch (error) {
     console.error("Erreur lors de la génération du fichier Excel :", error);
     res.status(500).json({ success: false, message: error.message });
