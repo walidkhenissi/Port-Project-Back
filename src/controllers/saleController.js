@@ -323,17 +323,15 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
-    console.log("test option:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
             case 'equals' : {
                // criteria.where.date = new Date(options.startDate);
                const startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
-                const endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
-                criteria.where.date = { '>=': startOfDay, '<=': endOfDay };
-                console.log("Critères pour equals :", criteria.where.date);
-                break;
+               const endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
+               criteria.where.date = { '>=': startOfDay, '<=': endOfDay };
+               break;
             }
             case 'notEquals' : {
                 criteria.where.date = {'!': options.startDate};
@@ -371,7 +369,6 @@ router.getSalesReportData = async function (options) {
             availableSales.push(sale);
     }
     sales = availableSales;
-    console.log("Critères finaux :", criteria);
     return sales;
 }
 
@@ -379,20 +376,21 @@ router.generatePDFSalesReport = async function (data, res) {
 
     let titleRow = [];
     titleRow.push([
-        {text: 'Date', fontSize: 12, alignment: 'center'},
-        {text: 'Producteur', fontSize: 12, alignment: 'center'},
-        {text: 'Article ', fontSize: 12, alignment: 'center' },
-        {text: 'Quantite  ', fontSize: 12, alignment: 'center' },
-        {text: 'Poid Net ', fontSize: 12, alignment: 'center' },
-        {text: 'Prix Total ', fontSize: 12, alignment: 'center' },
-        {text: 'Comission Prod', fontSize: 12, alignment: 'center'},
-        {text: 'Commercant', fontSize: 12, alignment: 'center' },
-        {text: 'Prix Unite', fontSize: 12, alignment: 'center' },
-        {text: 'Commission Com', fontSize: 12, alignment: 'center' },
-        {text: 'Total a payer ', fontSize: 12, alignment: 'center' },
-        {text: 'Total Net', fontSize: 12, alignment: 'center' }
+        {text: 'Date', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
+        {text: 'Producteur', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Quantite  ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Poid Net ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Prix Total ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Comission Prod', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Commercant', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'},
+        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Commission Com', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
+        {text: 'Total a payer ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Total Net', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}
     ]);
     let salesReportData = [];
+    let sousTotal=0;
     for (const sale of data) {
         for (const transaction of sale.saleTransactions) {
             salesReportData.push([
@@ -401,16 +399,17 @@ router.generatePDFSalesReport = async function (data, res) {
             { text: transaction.article ? transaction.article.name : 'Non spécifié', fontSize: 10, alignment: 'center' },
             { text: transaction.boxes, fontSize: 10, alignment: 'center' },
             { text: transaction.netWeight, fontSize: 10, alignment: 'center' },
-            { text: transaction.totalPrice, fontSize: 10, alignment: 'center' },
-            { text: sale.totalProducerCommission, fontSize: 10, alignment: 'center' },
+            { text: transaction.totalPrice.toLocaleString('fr-TN',{ style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
+            { text: sale.totalProducerCommission.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
             { text: transaction.merchant ? transaction.merchant.name:'Non spécifié', fontSize: 10, alignment: 'center'},
             { text: transaction.unitPrice, fontSize: 10, alignment: 'center' },
-            { text: sale.totalMerchantCommission, fontSize: 10, alignment: 'center' },
-            { text: sale.totalToPay, fontSize: 10, alignment: 'center' },
-            { text: sale.total, fontSize: 10, alignment: 'center' }
+            { text: sale.totalMerchantCommission.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
+            { text: sale.totalToPay.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
+            { text: sale.total.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' }
             ]);
         }
     }
+
     let docDefinition = {
         pageSize: 'A4',
         pageMargins: [25, 25, 25, 25],
@@ -419,40 +418,26 @@ router.generatePDFSalesReport = async function (data, res) {
             fontSize: 5,
             columnGap: 20
         },
-        content: [
-            // Titre du rapport
-            { text: 'Etats des Ventes', fontSize: 22, alignment: 'center', margin: [0, 20] },
-            // Table des ventes
+        content: []
+    };
+    docDefinition.content.push({
+        text: 'État des Ventes',  fontSize: 22, alignment: 'center', margin: [0, 20]
+    });
+    docDefinition.content.push({
+        columns: [
             {
                 table: {
                     body: [
-                        ...titleRow,
-                        ...salesReportData
-                    ],
-                    widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto'],
+                    ...titleRow,
+                    ...salesReportData],
+        widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto']
                 },
-                layout: 'lightHorizontalLines',  // Style des lignes horizontales
             }
-        ]
-    };
-    /*
-    docDefinition.content.push('\n');
-    docDefinition.content.push({
-            columns: [
-                {
-                    table: {
-                        body: [
-                            ...titleRow,  // Ajouter les titres de colonnes
-                            ...salesData  // Ajouter les données des ventes
-                        ],
-                        widths: ['10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%', '10%']
-                    },
-                }
             ]
-        }
-    );
+    });
+
     docDefinition.content.push('\n');
-    */
+
     // var PdfPrinter = require('pdfmake');
     var fonts = {
         Roboto: {
@@ -469,7 +454,7 @@ router.generatePDFSalesReport = async function (data, res) {
     var options = {
         // ...
     };
-    const path = require('path');
+
     fileName = "pdfFile.pdf";
     await tools.cleanTempDirectory(fs, path);
     try {
@@ -486,44 +471,59 @@ router.generatePDFSalesReport = async function (data, res) {
 
 router.generateExcelSalesReport = async function (data, res) {
    try{
-    const title = `État de production `;
-    // Ajouter les en-têtes
-    const columns = [];
-    // Préparer les données
+    const title = `État des Ventes `;
+       const columns = [
+           { header: 'Date', key: 'date', width: 20 },
+           { header: 'Producteur', key: 'producerName', width: 25 },
+           { header: 'Article', key: 'article', width: 30 },
+           { header: 'Quantité', key: 'quantites', width: 15 },
+           { header: 'Poid Net', key: 'netWeight', width: 15 },
+           { header: 'Prix Unitaire', key: 'unitPrice', width: 15 },
+           { header: 'Prix Total', key: 'totalPrice', width: 20 },
+           { header: 'Commission Producteur', key: 'totalProducerCommission', width: 20 },
+           { header: 'Commerçant', key: 'merchant', width: 25 },
+           { header: 'Commission Commerçant', key: 'totalMerchantCommission', width: 20 },
+           { header: 'Total à Payer', key: 'totalToPay', width: 20 },
+           { header: 'Total Net', key: 'total', width: 20 }
+       ];
     let salesReportData = data.flatMap(sale =>
         sale.saleTransactions.map(transaction => ({
-            'Date': sale.date,
-            'Producteur': sale.producerName,
-            'Article': transaction.article ? transaction.article.name : 'Non spécifié',
-            'Quantité':transaction.boxes,
-            'Poid Net':transaction.netWeight,
-            'Prix Total' : transaction.totalPrice,
-            'Commission Producteur': sale.totalProducerCommission,
-            'Commerçant': transaction.merchant ? transaction.merchant.name: 'Non spécifié',
-            'Prix Unitaire': transaction.unitPrice,
-            'Commission Commerçant': sale.totalMerchantCommission,
-            'Total à Payer': sale.totalToPay,
-            'Total Net': sale.total
+            date: sale.date,
+            producerName: sale.producerName,
+            article: transaction.article ? transaction.article.name : 'Non spécifié',
+            quantites:transaction.boxes,
+            netWeight:transaction.netWeight,
+            unitPrice: transaction.unitPrice,
+            totalPrice : transaction.totalPrice,
+            totalProducerCommission: sale.totalProducerCommission,
+            merchant: transaction.merchant ? transaction.merchant.name: 'Non spécifié',
+            totalMerchantCommission: sale.totalMerchantCommission,
+            totalToPay: sale.totalToPay,
+            total: sale.total
         }))
     );
 
-    const worksheet = XLSX.utils.json_to_sheet(salesReportData, { header: columns });
-    // Ajouter les colonnes dans la feuille
-    worksheet['!cols'] = columns.map(() => ({ wch: 20 }));
+    const worksheet = XLSX.utils.json_to_sheet(salesReportData, { header: columns.map(col => col.key) });
+    const headerRow = worksheet['A1'] && worksheet['B1'];
+     columns.forEach((col, index) => {
+           const cell = worksheet[XLSX.utils.encode_cell({ r: 0, c: index })];
+           if (cell) {
+               cell.s = { font: { bold: true } }; // Appliquer le style gras
+           }
+       });
 
-    // Créer un classeur et une feuille
+    worksheet['!cols'] = columns.map(col => ({ wch: col.width}));
+
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, title);
-// Définir le chemin du fichier
-    const path = require('path');
-    fileName = "excelFile.xlsx";
+   fileName = "excelFile.xlsx";
 
    const excelFile=tools.PDF_PATH;
     if (!fs.existsSync(excelFile)) {
-        fs.mkdirSync(excelFile, { recursive: true }); // Créez le répertoire s'il n'existe pas
+        fs.mkdirSync(excelFile, { recursive: true });
     }
     const filePath = path.join(excelFile,fileName);
-    // Enregistrer le fichier Excel
+
         XLSX.writeFile(workbook, filePath);
         res.status(201).json(new Response(fileName));
 } catch (error) {
