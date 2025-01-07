@@ -6,7 +6,7 @@ const salePaymentDao = require("../dao/salePaymentDao");
 const boatDao = require("../dao/boatDao");
 const salesTransactionDao = require("../dao/salesTransactionDao");
 const Response = require("../utils/response");
-const {Merchant, CommissionValue, Commission, SalesTransaction, PaymentInfo,Article} = require("../models");
+const {Merchant, Shipowner,CommissionValue, Commission, SalesTransaction, PaymentInfo,Article} = require("../models");
 const boxesTransactionController = require("./boxesTransactionController");
 const fs = require("fs");
 const path = require("path");
@@ -301,13 +301,15 @@ router.checkPaymentInfo = async function (sale) {
 
 
 router.post('/generateSalesReport', async (req, res) => {
+    const { startDate, endDate, producer, merchant, article } = req.body;
+
     try
     {
     const dataToReport = await router.getSalesReportData(req.body);
     if (req.body.excelType){
         router.generateExcelSalesReport(dataToReport, res);
     }else if (req.body.pdfType){
-        router.generatePDFSalesReport(dataToReport, res);
+        router.generatePDFSalesReport(dataToReport,req.body, res);
     } else{
         // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
         res.status(200).json({
@@ -323,6 +325,7 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
+   console.log("option1:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
@@ -372,43 +375,140 @@ router.getSalesReportData = async function (options) {
     return sales;
 }
 
-router.generatePDFSalesReport = async function (data, res) {
+router.generatePDFSalesReport = async function (data, filter,res) {
+    const { startDate, endDate, producer, merchant, article } = filter;
+    let hideProducer = !data.some(sale => sale.producerName);
+    let hideMerchant = !data.some(sale => sale.saleTransactions.some(transaction => transaction.merchant));
+    let hideArticle = !data.some(sale => sale.saleTransactions.some(transaction => transaction.article));
 
     let titleRow = [];
     titleRow.push([
         {text: 'Date', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
-        {text: 'Producteur', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        ...(!hideProducer ?  [{text: 'Producteur', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}] : []),
+        ...(!hideArticle ? [{text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}] : []),
+        ...(!hideMerchant ?  [{text: 'Commercant', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'}] : []),
+        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Quantite  ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Poid Net ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Prix Total ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Comission Prod', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Commercant', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'},
-        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Commission Com', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
         {text: 'Total a payer ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
         {text: 'Total Net', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}
     ]);
     let salesReportData = [];
-    let sousTotal=0;
+    let totalMerchantCommissionSum = 0;
+    let totalProducerCommissionSum=0;
+    let totalToPaySum =0;
+    let totalSum =0;
+    let totalQuantitySum=0;
+    let totalWeightSum =0;
+    let totalPriceSum =0;
+
     for (const sale of data) {
+        totalMerchantCommissionSum += sale.totalMerchantCommission;
+        totalProducerCommissionSum += sale.totalProducerCommission;
+        totalToPaySum +=sale.totalToPay;
+        totalSum += sale.total;
         for (const transaction of sale.saleTransactions) {
+            totalQuantitySum +=transaction.boxes;
+            totalWeightSum +=transaction.netWeight;
+            totalPriceSum += transaction.totalPrice;
             salesReportData.push([
-            { text: sale.date, fontSize: 10, alignment: 'center' },
-            { text: sale.producerName, fontSize: 10, alignment: 'center' },
-            { text: transaction.article ? transaction.article.name : 'Non spécifié', fontSize: 10, alignment: 'center' },
-            { text: transaction.boxes, fontSize: 10, alignment: 'center' },
-            { text: transaction.netWeight, fontSize: 10, alignment: 'center' },
-            { text: transaction.totalPrice.toLocaleString('fr-TN',{ style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
-            { text: sale.totalProducerCommission.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
-            { text: transaction.merchant ? transaction.merchant.name:'Non spécifié', fontSize: 10, alignment: 'center'},
-            { text: transaction.unitPrice, fontSize: 10, alignment: 'center' },
-            { text: sale.totalMerchantCommission.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
-            { text: sale.totalToPay.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' },
-            { text: sale.total.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2 }), fontSize: 10, alignment: 'center' }
+                {text: sale.date, fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length},
+                ...(!hideProducer ? [{
+                    text: sale.producerName,
+                    fontSize: 10,
+                    alignment: 'center',
+                    rowSpan: sale.saleTransactions.length
+                }] : []),
+                ...(!hideArticle ? [{
+                    text: transaction.article ? transaction.article.name : 'Non spécifié',
+                    fontSize: 10,
+                    alignment: 'center',
+                }] : []),
+                ...(!hideMerchant ? [{
+                    text: transaction.merchant?.name || 'Non spécifié',
+                    fontSize: 10,
+                    alignment: 'center'
+                }] : []),
+                {text: transaction.unitPrice, fontSize: 10, alignment: 'center'},
+                {text: transaction.boxes, fontSize: 10, alignment: 'center'},
+                {text: transaction.netWeight, fontSize: 10, alignment: 'center'},
+                {text: transaction.totalPrice, fontSize: 10, alignment: 'center'},
+                { text: sale.totalProducerCommission,fontSize: 10, alignment: 'center',rowSpan: sale.saleTransactions.length},
+                {text: sale.totalMerchantCommission.toLocaleString('fr-TN', {
+                        style: 'decimal',
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
+                },
+                {text: sale.totalToPay.toLocaleString('fr-TN', {
+                        style: 'decimal',
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
+                },
+                {
+                    text: sale.total.toLocaleString('fr-TN', {
+                        style: 'decimal',
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
+                }
+
             ]);
         }
     }
+
+salesReportData.push([
+    { text: 'Total', fontSize: 10, alignment: 'center', bold: true,colSpan: 5},
+    ...(!hideProducer ? [''] : []),
+    ...(!hideArticle ? [''] : []),
+    '', '',
+    { text: totalQuantitySum, fontSize: 10, alignment: 'center', bold: true },
+    { text: totalWeightSum, fontSize: 10, alignment: 'center', bold: true },
+    { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+    { text: totalProducerCommissionSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+    { text: totalMerchantCommissionSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+    { text: totalToPaySum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+    { text: totalSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+]);
+
+    const formattedStartDate = startDate
+        ? new Date(startDate).toLocaleDateString('fr-TN')
+        : null;
+    const formattedEndDate = endDate && endDate !== startDate
+        ? new Date(endDate).toLocaleDateString('fr-TN')
+        : null;
+    let period = '';
+    if (formattedStartDate && !formattedEndDate) {
+        period = `de : ${formattedStartDate}`;
+    }else if (formattedStartDate && formattedEndDate) {
+        period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
+    }
+    let producerName = '';
+    if (producer) {
+            const producerData = await Shipowner.findByPk(producer);
+            producerName = producerData ? `Producteur : ${producerData.name}` : '';
+    }
+    let articleName = '';
+    if (article) {
+            const articleData = await Article.findByPk(article);
+            articleName = articleData ? `Produit : ${articleData.name}` : '';
+    }
+    let merchantName = '';
+    if (merchant) {
+            const merchantData = await Merchant.findByPk(merchant);
+            merchantName = merchantData ? `Commerçant : ${merchantData.name}` : '';
+    }
+    let reportTitle = 'Etat des ventes';
+    if (producerName || articleName || merchantName || period) {
+        let additionalParts = [producerName, articleName, merchantName, period].filter(part => part !== '');
+        reportTitle += 'pour le' + additionalParts.join(' | ');
+    }
+
+    let generationDate = `Date de génération : ${new Date().toLocaleDateString("fr-FR")}`;
 
     let docDefinition = {
         pageSize: 'A4',
@@ -421,7 +521,17 @@ router.generatePDFSalesReport = async function (data, res) {
         content: []
     };
     docDefinition.content.push({
-        text: 'État des Ventes',  fontSize: 22, alignment: 'center', margin: [0, 20]
+        text: reportTitle,
+        fontSize: 22,
+        alignment: 'center',
+        margin: [0, 20]
+    });
+
+    docDefinition.content.push({
+        text: generationDate,
+        fontSize: 10,
+        alignment: 'right',
+        margin: [0, 0, 0, 10]
     });
     docDefinition.content.push({
         columns: [
