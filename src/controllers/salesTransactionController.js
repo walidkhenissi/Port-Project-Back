@@ -7,7 +7,12 @@ const boxesTransactionController = require("../controllers/boxesTransactionContr
 const saleController = require("../controllers/saleController");
 const commissionController = require("../controllers/commissionController");
 const Response = require("../utils/response");
-const {CommissionValue, Merchant, PaymentInfo} = require("../models");
+const {CommissionValue, Merchant, PaymentInfo, Shipowner, Article} = require("../models");
+const dao = require("../dao/saleDao");
+const PdfPrinter = require("pdfmake");
+const fs = require("fs");
+const path = require("path");
+const XLSX = require("xlsx");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -273,5 +278,241 @@ router.checkPaymentInfo = async function (salesTransaction) {
     salesTransaction.paymentInfoId = paymentInfo.id;
     return salesTransaction;
 }
+/**************************************/
+router.post('/generateSalesTransactionReport', async (req, res) => {
+    const { startDate, endDate, merchant, article } = req.body;
+    try
+    {
+        const dataToReport = await router.getSalesTransactionReportData(req.body);
+        if (req.body.excelType){
+            router.generateExcelSalesTransactionReport(dataToReport, res);
+        }else if (req.body.pdfType){
+            router.generatePDFSalesTransactionReport(dataToReport,req.body, res);
+        } else{
+            // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
+            res.status(200).json({
+                message: 'Report data fetched successfully',
+                data: dataToReport
+            });
+        }
+    }catch (error){
+        console.error('Error generating sales report:', error);
+
+        res.status(500).json({ error: 'Error generating report' });
+    }
+});
+
+router.getSalesTransactionReportData = async function (options) {
+    let criteria = {where: {}};
+
+    if (!tools.isFalsey(options.dateRule)) {
+        switch (options.dateRule) {
+            case 'equals' : {
+                const startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
+                const endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
+                criteria.where.date = { '>=': startOfDay, '<=': endOfDay };
+                break;
+            }
+            case 'notEquals' : {
+                criteria.where.date = {'!': options.startDate};
+                break;
+            }
+            case 'lowerThan' : {
+                criteria.where.date = {'<=': options.startDate};
+                break;
+            }
+            case 'greaterThan' : {
+                criteria.where.date = {'>=': options.startDate};
+                break;
+            }
+            case 'between' : {
+                criteria.where.date = {'>=': options.startDate, '<=': options.endDate};
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+
+        if (!tools.isFalsey(options.merchant))
+            criteria.where.merchantId = options.merchant;
+        if (!tools.isFalsey(options.article))
+          criteria.where.articleId = options.article;
+        if (!tools.isFalsey(options.saleId)) {
+            criteria.where.saleId = options.saleId;
+        }
+        let transasctions = await salesTransactionDao.find(criteria);
+        return transasctions;
+
+};
+
+router.generatePDFSalesTransactionReport = async function (data, filter,res) {
+    const { startDate, endDate, merchant, article } = filter;
+    let titleRow = [];
+    titleRow.push([
+        {text: 'Date', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
+        {text: 'Client', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'},
+        {text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Quantite  ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Poid Net ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+        {text: 'Prix Total ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}
+    ]);
+    let salesReportData = [];
+    let totalPriceSum =0;
+    let totalQuantitySum=0;
+    let totalWeightSum =0;
+    for (const transaction of data) {
+            totalQuantitySum +=transaction.boxes;
+            totalWeightSum +=transaction.netWeight;
+            totalPriceSum += transaction.totalPrice;
+            salesReportData.push([
+                {text: transaction.date, fontSize: 13, alignment: 'center'},
+                {text: transaction.merchant?.name || 'Non spécifié',fontSize: 13, alignment: 'center'},
+                {text: transaction.article ? transaction.article.name : 'Non spécifié',fontSize: 13, alignment: 'center' },
+                {text: transaction.boxes, fontSize: 13, alignment: 'center'},
+                {text: transaction.netWeight, fontSize: 13, alignment: 'center'},
+                {text: transaction.unitPrice, fontSize: 13, alignment: 'center'},
+                {text: transaction.totalPrice.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 13, alignment: 'center'},
+            ]);
+
+    }
+    salesReportData.push([
+        { text: 'Total', fontSize: 13, alignment: 'center', bold: true,colSpan: 3},
+        '', '',
+        { text: totalQuantitySum, fontSize: 13, alignment: 'center', bold: true },
+        { text: totalWeightSum, fontSize: 13, alignment: 'center', bold: true },
+        '',
+       { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+    ]);
+
+    const formattedStartDate = startDate
+        ? new Date(startDate).toLocaleDateString('fr-TN')
+        : null;
+    const formattedEndDate = endDate && endDate !== startDate
+        ? new Date(endDate).toLocaleDateString('fr-TN')
+        : null;
+    let period = '';
+    if (formattedStartDate && !formattedEndDate) {
+        period = `de : ${formattedStartDate}`;
+    }else if (formattedStartDate && formattedEndDate) {
+        period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
+    }
+
+    let articleName = '';
+    if (article) {
+        const articleData = await Article.findByPk(article);
+        articleName = articleData ? `Produit : ${articleData.name}` : '';
+    }
+    let merchantName = '';
+    if (merchant) {
+        const merchantData = await Merchant.findByPk(merchant);
+        merchantName = merchantData ? `Commerçant : ${merchantData.name}` : '';
+    }
+    let title='Liste des comptes commercants';
+    let reportTitle=[];
+    if (articleName) {
+        reportTitle.push(`${articleName}`);
+    }
+    if (merchantName) {
+        reportTitle.push(`${merchantName}`);
+    }
+    if (period) {
+        reportTitle.push(period);
+    }
+
+    let generationDate = `Date de génération : ${new Date().toLocaleDateString("fr-FR")}`;
+
+    let docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [25, 25, 25, 25],
+        pageOrientation: 'portrait',
+        defaultStyle: {
+            fontSize: 10,
+            columnGap: 20
+        },
+        content: []
+    };
+    docDefinition.content.push({
+        text: title,
+        fontSize: 22,
+        alignment: 'center',
+        margin: [0, 20]
+    });
+    docDefinition.content.push({
+        text: reportTitle.join('\n'),
+        fontSize: 15,
+        alignment: 'center',
+        margin: [0, 20]
+    });
+
+    docDefinition.content.push({
+        text: generationDate,
+        fontSize: 10,
+        alignment: 'right',
+        margin: [0, 0, 0, 10]
+    });
+    docDefinition.content.push('\n');
+
+    docDefinition.content.push({
+        columns: [
+            {
+                table: {
+                    body: [
+                        ...titleRow,
+                        ...salesReportData],
+                    widths: ['15%', '20%', '15%', '15%', '15%', '10%', '10%']
+                },
+            }
+        ]
+    });
+
+    docDefinition.content.push('\n');
+
+    // var PdfPrinter = require('pdfmake');
+    var fonts = {
+        Roboto: {
+            normal: './assets/fonts/roboto/Roboto-Regular.ttf',
+            bold: './assets/fonts/roboto/Roboto-Bold.ttf',
+            italics: './assets/fonts/roboto/Roboto-Italic.ttf',
+            bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+        }
+    };
+
+    var PdfPrinter = require('pdfmake/src/printer');
+    var printer = new PdfPrinter(fonts);
+    var fs = require('fs');
+    var options = {
+        // ...
+    };
+
+    fileName = "achatClient.pdf";
+    await tools.cleanTempDirectory(fs, path);
+    try {
+        var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+        pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
+            res.status(201).json(new Response(fileName,path));
+        });
+        pdfDoc.end();
+    } catch (err) {
+        console.log("=====================>err : " + JSON.stringify(err));
+        res.status(404).json(new Response(err, true));
+    }
+}
+
+router.generateExcelSalesTransactionReport = async function (data, res) {
+    try{
+        const title = `État d'achat' `;
+
+    } catch (error) {
+        console.error("Erreur lors de la génération du fichier Excel :", error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+
+};
+
+
+
 
 module.exports = router;

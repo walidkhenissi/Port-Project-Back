@@ -481,12 +481,15 @@ salesReportData.push([
     const formattedEndDate = endDate && endDate !== startDate
         ? new Date(endDate).toLocaleDateString('fr-TN')
         : null;
+    console.log("formattedStartDate:",formattedStartDate);
+    console.log("formattedEndDate:",formattedEndDate);
     let period = '';
     if (formattedStartDate && !formattedEndDate) {
         period = `de : ${formattedStartDate}`;
     }else if (formattedStartDate && formattedEndDate) {
         period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
     }
+
     let producerName = '';
     if (producer) {
             const producerData = await Shipowner.findByPk(producer);
