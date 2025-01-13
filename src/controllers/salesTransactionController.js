@@ -13,6 +13,7 @@ const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
 const XLSX = require("xlsx");
+const ExcelJS = require("exceljs");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -285,7 +286,7 @@ router.post('/generateSalesTransactionReport', async (req, res) => {
     {
         const dataToReport = await router.getSalesTransactionReportData(req.body);
         if (req.body.excelType){
-            router.generateExcelSalesTransactionReport(dataToReport, res);
+            router.generateExcelSalesTransactionReport(dataToReport,req.body, res);
         }else if (req.body.pdfType){
             router.generatePDFSalesTransactionReport(dataToReport,req.body, res);
         } else{
@@ -333,8 +334,6 @@ router.getSalesTransactionReportData = async function (options) {
                 break;
         }
     }
-
-
         if (!tools.isFalsey(options.merchant))
             criteria.where.merchantId = options.merchant;
         if (!tools.isFalsey(options.article))
@@ -386,18 +385,58 @@ router.generatePDFSalesTransactionReport = async function (data, filter,res) {
         '',
        { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
     ]);
-
-    const formattedStartDate = startDate
-        ? new Date(startDate).toLocaleDateString('fr-TN')
-        : null;
-    const formattedEndDate = endDate && endDate !== startDate
-        ? new Date(endDate).toLocaleDateString('fr-TN')
-        : null;
     let period = '';
-    if (formattedStartDate && !formattedEndDate) {
-        period = `de : ${formattedStartDate}`;
-    }else if (formattedStartDate && formattedEndDate) {
-        period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
+    switch (filter.dateRule) {
+        case 'equals': {
+            const formattedDate = filter.startDate
+                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                : null;
+            period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
+            break;
+        }
+        case 'notEquals': {
+            const formattedDate = filter.startDate
+                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                : null;
+            period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
+            break;
+        }
+        case 'lowerThan': {
+            const formattedDate = filter.startDate
+                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                : null;
+            period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
+            break;
+        }
+        case 'greaterThan': {
+            const formattedDate = filter.startDate
+                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                : null;
+            period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
+            break;
+        }
+        case 'between': {
+            const formattedStartDate = filter.startDate
+                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                : null;
+            const formattedEndDate = filter.endDate
+                ? new Date(filter.endDate).toLocaleDateString('fr-TN')
+                : null;
+
+            if (formattedStartDate && formattedEndDate) {
+                period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
+            } else if (formattedStartDate) {
+                period = `À partir de : ${formattedStartDate}`;
+            } else if (formattedEndDate) {
+                period = `Jusqu'à : ${formattedEndDate}`;
+            } else {
+                period = 'Période non spécifiée';
+            }
+            break;
+        }
+        default: {
+            period = 'Règle de date non reconnue';
+        }
     }
 
     let articleName = '';
@@ -501,9 +540,190 @@ router.generatePDFSalesTransactionReport = async function (data, filter,res) {
     }
 }
 
-router.generateExcelSalesTransactionReport = async function (data, res) {
+router.generateExcelSalesTransactionReport = async function (data,filter, res) {
+    const { startDate, endDate, merchant, article } = filter;
     try{
-        const title = `État d'achat' `;
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Rapport');
+
+        const  columns = [
+            { header: 'Date', key: 'date', width: 15 },
+            { header: 'Client', key: 'merchant', width: 20 },
+            { header: 'Article', key: 'article', width: 20 },
+            { header: 'Quantité', key: 'quantity', width: 15 },
+            { header: 'Poids Net', key: 'netWeight', width: 15 },
+            { header: 'Prix Unité', key: 'unitPrice', width: 15 },
+            { header: 'Prix Total', key: 'totalPrice', width: 15 },
+        ];
+        worksheet.columns = columns;
+        const reportTitle = [];
+        if (article) {
+            const articleData = await Article.findByPk(article);
+            reportTitle.push(articleData ? `Produit : ${articleData.name}` : '');
+        }
+        if (merchant) {
+            const merchantData = await Merchant.findByPk(merchant);
+            reportTitle.push(merchantData ? `Commerçant : ${merchantData.name}` : '');
+        }
+        let period = '';
+
+        switch (filter.dateRule) {
+            case 'equals': {
+                const formattedDate = filter.startDate
+                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                    : null;
+                period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
+                break;
+            }
+            case 'notEquals': {
+                const formattedDate = filter.startDate
+                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                    : null;
+                period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
+                break;
+            }
+            case 'lowerThan': {
+                const formattedDate = filter.startDate
+                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                    : null;
+                period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
+                break;
+            }
+            case 'greaterThan': {
+                const formattedDate = filter.startDate
+                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                    : null;
+                period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
+                break;
+            }
+            case 'between': {
+                const formattedStartDate = filter.startDate
+                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
+                    : null;
+                const formattedEndDate = filter.endDate
+                    ? new Date(filter.endDate).toLocaleDateString('fr-TN')
+                    : null;
+
+                if (formattedStartDate && formattedEndDate) {
+                    period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
+                } else if (formattedStartDate) {
+                    period = `À partir de : ${formattedStartDate}`;
+                } else if (formattedEndDate) {
+                    period = `Jusqu'à : ${formattedEndDate}`;
+                } else {
+                    period = 'Période non spécifiée';
+                }
+                break;
+            }
+            default: {
+                period = '';
+            }
+        }
+
+        if (period) {
+            reportTitle.push(period);
+        }
+
+        worksheet.mergeCells('A1:G1');
+        const dateCell = worksheet.getCell('A1');
+        dateCell.value = `Date de génération : ${new Date().toLocaleDateString('fr-FR')}`;
+        dateCell.font = { name: 'Arial',italic: true, size: 10 };
+        dateCell.alignment = { horizontal: 'right', vertical: 'middle' };
+        worksheet.getRow(1).height = 30;
+
+        worksheet.mergeCells('A2:G2');
+        const titleCell = worksheet.getCell('A2');
+        titleCell.value = 'Liste des comptes commerçants';
+        titleCell.font = { size: 16, bold: true };
+        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
+        worksheet.getRow(2).height = 40;
+
+
+        worksheet.mergeCells('A3:G3');
+        const subTitleCell = worksheet.getCell('A3');
+        subTitleCell.value = reportTitle.join('\n');
+        subTitleCell.font = { size: 12, italic: true };
+        subTitleCell.alignment = { horizontal: 'center', vertical: 'middle',wrapText: true };
+        worksheet.getRow(3).height = 70;
+        worksheet.addRow([]);
+
+        const headerRow = worksheet.addRow(columns.map((col) => col.header));
+        headerRow.font = { bold: true };
+        headerRow.alignment = { horizontal: 'center', vertical: 'middle' };
+        headerRow.eachCell((cell) => {
+            cell.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFEEEEEE' },
+            };
+            cell.border = {
+                top: { style: 'thin' },
+                left: { style: 'thin' },
+                bottom: { style: 'thin' },
+                right: { style: 'thin' },
+            };
+        });
+
+        let totalPriceSum = 0;
+        let totalQuantitySum = 0;
+        let totalWeightSum = 0;
+
+        data.forEach((transaction) => {
+            totalQuantitySum += transaction.boxes;
+            totalWeightSum += transaction.netWeight;
+            totalPriceSum += transaction.totalPrice;
+
+            worksheet.addRow({
+                date: transaction.date,
+                merchant: transaction.merchant?.name || 'Non spécifié',
+                article: transaction.article?.name || 'Non spécifié',
+                quantity: transaction.boxes,
+                netWeight: transaction.netWeight,
+                unitPrice: transaction.unitPrice,
+                totalPrice: transaction.totalPrice.toLocaleString('fr-TN', {
+                    style: 'decimal',
+                    minimumFractionDigits: 2,
+                }),
+            });
+        });
+
+        worksheet.addRow({
+            date: 'Total',
+            merchant: '',
+            article: '',
+            quantity: totalQuantitySum,
+            netWeight: totalWeightSum,
+            unitPrice: '',
+            totalPrice: totalPriceSum.toLocaleString('fr-TN', {
+                style: 'decimal',
+                minimumFractionDigits: 2,
+            }),
+        });
+        worksheet.eachRow((row, rowNumber) => {
+            row.eachCell((cell) => {
+                cell.border = {
+                    top: { style: 'thin' },
+                    left: { style: 'thin' },
+                    bottom: { style: 'thin' },
+                    right: { style: 'thin' },
+                };
+                if (rowNumber === 2 || rowNumber === 4) {
+                    cell.font = { bold: true };
+                    cell.alignment = { horizontal: 'center',vertical: 'middle' };
+                }
+            });
+        });
+
+        const fileName = "achatClient.xlsx";
+        const excelFile=tools.Excel_PATH;
+        if (!fs.existsSync(excelFile)) {
+            fs.mkdirSync(excelFile, { recursive: true });
+        }
+        const filePath = path.join(excelFile,fileName);
+
+        await workbook.xlsx.writeFile(filePath);
+        res.status(201).json(new Response(fileName));
+
 
     } catch (error) {
         console.error("Erreur lors de la génération du fichier Excel :", error);
@@ -511,8 +731,5 @@ router.generateExcelSalesTransactionReport = async function (data, res) {
     }
 
 };
-
-
-
 
 module.exports = router;

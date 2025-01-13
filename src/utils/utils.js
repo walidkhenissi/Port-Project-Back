@@ -1,6 +1,7 @@
 const {Op} = require("sequelize");
 module.exports = {
     PDF_PATH: 'files/tempPDF/',
+    Excel_PATH: 'files/tempPDF/',
     isFalsey: function (value) {
         return value === null || value === undefined || value === 'undefined' || value === '' || value === NaN;
     },
