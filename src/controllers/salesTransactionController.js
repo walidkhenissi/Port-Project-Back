@@ -408,10 +408,7 @@ router.generateReportTitle=async function (filter) {
 }
 
 router.generatePDFSalesTransactionReport = async function (data, filter,res) {
-  //const { startDate, endDate, merchant, article } = filter;
-
       const { title, reportTitle, period, generationDate } = await router.generateReportTitle(filter);
-
 
 let titleRow = [];
 titleRow.push([
@@ -479,45 +476,7 @@ let docDefinition = {
         },
     ],
 };
-/*
-docDefinition.content.push({
-    text: reportTitle.join(''),
-    fontSize: 20,
-    alignment: 'center',
-    margin: [0, 10]
-});
-if (period) {
-    docDefinition.content.push({
-        text: `${period}`,
-        fontSize: 16,
-        alignment: 'center',
-        margin: [0, 8]
-    });
-}
 
-docDefinition.content.push({
-    text: generationDate,
-    fontSize: 10,
-    alignment: 'right',
-    margin: [0, 0, 0, 10]
-});
-docDefinition.content.push('\n');
-
-docDefinition.content.push({
-    columns: [
-        {
-            table: {
-                body: [
-                    ...titleRow,
-                    ...salesReportData],
-                widths: ['*', !filter.merchant ?'*':0, !filter.article ? '*':0, '*', '*', '*', '*'].filter(Boolean),
-            },
-        }
-    ]
-});
-
-docDefinition.content.push('\n');
-*/
 // var PdfPrinter = require('pdfmake');
 var fonts = {
     Roboto: {
@@ -552,7 +511,6 @@ try {
 router.generateExcelSalesTransactionReport = async function (data,filter, res) {
     const { title, reportTitle, period, generationDate } = await router.generateReportTitle(filter);
 
-   // const { startDate, endDate, merchant, article } = filter;
     try{
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Rapport');
