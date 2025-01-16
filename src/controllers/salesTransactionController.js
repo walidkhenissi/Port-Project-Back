@@ -345,307 +345,246 @@ router.getSalesTransactionReportData = async function (options) {
         return transasctions;
 
 };
-
-router.generatePDFSalesTransactionReport = async function (data, filter,res) {
-    const { startDate, endDate, merchant, article } = filter;
-    let titleRow = [];
-    titleRow.push([
-        {text: 'Date', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
-        {text: 'Client', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'},
-        {text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Quantite  ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Poid Net ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Prix Total ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}
-    ]);
-    let salesReportData = [];
-    let totalPriceSum =0;
-    let totalQuantitySum=0;
-    let totalWeightSum =0;
-    for (const transaction of data) {
-            totalQuantitySum +=transaction.boxes;
-            totalWeightSum +=transaction.netWeight;
-            totalPriceSum += transaction.totalPrice;
-            salesReportData.push([
-                {text: transaction.date, fontSize: 13, alignment: 'center'},
-                {text: transaction.merchant?.name || 'Non spécifié',fontSize: 13, alignment: 'center'},
-                {text: transaction.article ? transaction.article.name : 'Non spécifié',fontSize: 13, alignment: 'center' },
-                {text: transaction.boxes, fontSize: 13, alignment: 'center'},
-                {text: transaction.netWeight, fontSize: 13, alignment: 'center'},
-                {text: transaction.unitPrice, fontSize: 13, alignment: 'center'},
-                {text: transaction.totalPrice.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 13, alignment: 'center'},
-            ]);
-
-    }
-    salesReportData.push([
-        { text: 'Total', fontSize: 13, alignment: 'center', bold: true,colSpan: 3},
-        '', '',
-        { text: totalQuantitySum, fontSize: 13, alignment: 'center', bold: true },
-        { text: totalWeightSum, fontSize: 13, alignment: 'center', bold: true },
-        '',
-       { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-    ]);
+router.generateReportTitle=async function (filter) {
+    const { merchant, article, startDate, endDate, dateRule } = filter;
+    let title = 'Liste des achats des commerçants';
+    let reportTitle = [];
     let period = '';
-    switch (filter.dateRule) {
-        case 'equals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
-            break;
-        }
-        case 'notEquals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
-            break;
-        }
-        case 'lowerThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
-            break;
-        }
-        case 'greaterThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
-            break;
-        }
-        case 'between': {
-            const formattedStartDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            const formattedEndDate = filter.endDate
-                ? new Date(filter.endDate).toLocaleDateString('fr-TN')
-                : null;
-
-            if (formattedStartDate && formattedEndDate) {
-                period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
-            } else if (formattedStartDate) {
-                period = `À partir de : ${formattedStartDate}`;
-            } else if (formattedEndDate) {
-                period = `Jusqu'à : ${formattedEndDate}`;
-            } else {
-                period = 'Période non spécifiée';
-            }
-            break;
-        }
-        default: {
-            period = 'Règle de date non reconnue';
-        }
-    }
-
     let articleName = '';
+    let merchantName = '';
+
     if (article) {
         const articleData = await Article.findByPk(article);
-        articleName = articleData ? `Produit : ${articleData.name}` : '';
+        articleName = articleData ? `pour l'article : ${articleData.name}` : '';
     }
-    let merchantName = '';
+
     if (merchant) {
         const merchantData = await Merchant.findByPk(merchant);
-        merchantName = merchantData ? `Commerçant : ${merchantData.name}` : '';
-    }
-    let title='Liste des comptes commercants';
-    let reportTitle=[];
-    if (articleName) {
-        reportTitle.push(`${articleName}`);
-    }
-    if (merchantName) {
-        reportTitle.push(`${merchantName}`);
-    }
-    if (period) {
-        reportTitle.push(period);
-    }
-
-    let generationDate = `Date de génération : ${new Date().toLocaleDateString("fr-FR")}`;
-
-    let docDefinition = {
-        pageSize: 'A4',
-        pageMargins: [25, 25, 25, 25],
-        pageOrientation: 'portrait',
-        defaultStyle: {
-            fontSize: 10,
-            columnGap: 20
-        },
-        content: []
-    };
-    docDefinition.content.push({
-        text: title,
-        fontSize: 22,
-        alignment: 'center',
-        margin: [0, 20]
-    });
-    docDefinition.content.push({
-        text: reportTitle.join('\n'),
-        fontSize: 15,
-        alignment: 'center',
-        margin: [0, 20]
-    });
-
-    docDefinition.content.push({
-        text: generationDate,
-        fontSize: 10,
-        alignment: 'right',
-        margin: [0, 0, 0, 10]
-    });
-    docDefinition.content.push('\n');
-
-    docDefinition.content.push({
-        columns: [
-            {
-                table: {
-                    body: [
-                        ...titleRow,
-                        ...salesReportData],
-                    widths: ['15%', '20%', '15%', '15%', '15%', '10%', '10%']
-                },
-            }
-        ]
-    });
-
-    docDefinition.content.push('\n');
-
-    // var PdfPrinter = require('pdfmake');
-    var fonts = {
-        Roboto: {
-            normal: './assets/fonts/roboto/Roboto-Regular.ttf',
-            bold: './assets/fonts/roboto/Roboto-Bold.ttf',
-            italics: './assets/fonts/roboto/Roboto-Italic.ttf',
-            bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+        if (merchantData) {
+            title = `Liste des achats du commerçant : ${merchantData.name}`;
+            merchantName = merchantData.name;
         }
-    };
-
-    var PdfPrinter = require('pdfmake/src/printer');
-    var printer = new PdfPrinter(fonts);
-    var fs = require('fs');
-    var options = {
-        // ...
-    };
-
-    fileName = "achatClient.pdf";
-    await tools.cleanTempDirectory(fs, path);
-    try {
-        var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
-        pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
-            res.status(201).json(new Response(fileName,path));
-        });
-        pdfDoc.end();
-    } catch (err) {
-        console.log("=====================>err : " + JSON.stringify(err));
-        res.status(404).json(new Response(err, true));
     }
+
+    switch (dateRule) {
+        case 'equals':
+            period = startDate ? `le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date exacte non spécifiée';
+            break;
+        case 'notEquals':
+            period = startDate ? `Exclure la date : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date à exclure non spécifiée';
+            break;
+        case 'lowerThan':
+            period = startDate ? `Avant le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date limite non spécifiée';
+            break;
+        case 'greaterThan':
+            period = startDate ? `Après le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date de début non spécifiée';
+            break;
+        case 'between':
+            const formattedStart = startDate ? new Date(startDate).toLocaleDateString('fr-TN') : null;
+            const formattedEnd = endDate ? new Date(endDate).toLocaleDateString('fr-TN') : null;
+            period = formattedStart && formattedEnd
+                ? `le : ${formattedStart} à ${formattedEnd}`
+                : formattedStart
+                    ? `À partir de : ${formattedStart}`
+                    : formattedEnd
+                        ? `Jusqu'à : ${formattedEnd}`
+                        : 'Période non spécifiée';
+            break;
+        default:
+            period = '';
+    }
+
+    reportTitle.push(title);
+    if (articleName) reportTitle.push(articleName);
+
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')}`;
+
+    return {
+        title,
+        reportTitle: reportTitle.join('\n'),
+        period,
+        generationDate,
+    };
+}
+
+router.generatePDFSalesTransactionReport = async function (data, filter,res) {
+  //const { startDate, endDate, merchant, article } = filter;
+
+      const { title, reportTitle, period, generationDate } = await router.generateReportTitle(filter);
+
+
+let titleRow = [];
+titleRow.push([
+    {text: 'Date', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee' },
+    !filter.merchant ?{text: 'Client', fontSize: 10, alignment: 'center',bold: true ,fillColor: '#eeeeee'}: null,
+    !filter.article ?{text: 'Article ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee'}: null,
+    {text: 'Quantite  ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+    {text: 'Poid Net ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+    {text: 'Prix Unite', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee'},
+    {text: 'Prix Total ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#eeeeee'}
+].filter(Boolean));
+
+let salesReportData = [];
+let totalPriceSum =0;
+let totalQuantitySum=0;
+let totalWeightSum =0;
+for (const transaction of data) {
+    totalQuantitySum +=transaction.boxes;
+    totalWeightSum +=transaction.netWeight;
+    totalPriceSum += transaction.totalPrice;
+    salesReportData.push([
+        {text: transaction.date, fontSize: 13, alignment: 'center'},
+        !filter.merchant ?{text: transaction.merchant?.name || 'Non spécifié',fontSize: 13, alignment: 'center'}: null,
+        !filter.article ?{text: transaction.article ? transaction.article.name : 'Non spécifié',fontSize: 13, alignment: 'center' }: null,
+        {text: transaction.boxes, fontSize: 13, alignment: 'center'},
+        {text: transaction.netWeight, fontSize: 13, alignment: 'center'},
+        {text: transaction.unitPrice, fontSize: 13, alignment: 'center'},
+        {text: transaction.totalPrice.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 13, alignment: 'center'},
+    ].filter(Boolean));
+
+}
+salesReportData.push([
+    { text: 'Total', fontSize: 13, alignment: 'center', bold: true,colSpan: 3- (filter.article ? 1 : 0) - (filter.merchant ? 1 : 0)},
+    ...(filter.merchant ? []:['']),
+    ...(filter.article ? [] : ['']),
+    { text: totalQuantitySum, fontSize: 13, alignment: 'center', bold: true },
+    { text: totalWeightSum, fontSize: 13, alignment: 'center', bold: true },
+    '',
+    { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
+]);
+
+
+let docDefinition = {
+    pageSize: 'A4',
+    pageMargins: [25, 25, 25, 25],
+    pageOrientation: 'portrait',
+    defaultStyle: {
+        fontSize: 10,
+        columnGap: 20
+    },
+    content: [
+        { text: reportTitle, fontSize: 20, alignment: 'center', margin: [0, 10] },
+        { text: period, fontSize: 16, alignment: 'center', margin: [0, 8] },
+        { text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10] },
+        '\n',
+        {
+            columns: [
+                {
+                    table: {
+                        body: [...titleRow, ...salesReportData],
+                        widths: ['*', !filter.merchant ? '*' : 0, !filter.article ? '*' : 0, '*', '*', '*', '*'].filter(Boolean),
+                    },
+                },
+            ],
+        },
+    ],
+};
+/*
+docDefinition.content.push({
+    text: reportTitle.join(''),
+    fontSize: 20,
+    alignment: 'center',
+    margin: [0, 10]
+});
+if (period) {
+    docDefinition.content.push({
+        text: `${period}`,
+        fontSize: 16,
+        alignment: 'center',
+        margin: [0, 8]
+    });
+}
+
+docDefinition.content.push({
+    text: generationDate,
+    fontSize: 10,
+    alignment: 'right',
+    margin: [0, 0, 0, 10]
+});
+docDefinition.content.push('\n');
+
+docDefinition.content.push({
+    columns: [
+        {
+            table: {
+                body: [
+                    ...titleRow,
+                    ...salesReportData],
+                widths: ['*', !filter.merchant ?'*':0, !filter.article ? '*':0, '*', '*', '*', '*'].filter(Boolean),
+            },
+        }
+    ]
+});
+
+docDefinition.content.push('\n');
+*/
+// var PdfPrinter = require('pdfmake');
+var fonts = {
+    Roboto: {
+        normal: './assets/fonts/roboto/Roboto-Regular.ttf',
+        bold: './assets/fonts/roboto/Roboto-Bold.ttf',
+        italics: './assets/fonts/roboto/Roboto-Italic.ttf',
+        bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+    }
+};
+
+var PdfPrinter = require('pdfmake/src/printer');
+var printer = new PdfPrinter(fonts);
+var fs = require('fs');
+var options = {
+    // ...
+};
+
+fileName = "achatClient.pdf";
+await tools.cleanTempDirectory(fs, path);
+try {
+    var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+    pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
+        res.status(201).json(new Response(fileName,path));
+    });
+    pdfDoc.end();
+} catch (err) {
+    console.log("=====================>err : " + JSON.stringify(err));
+    res.status(404).json(new Response(err, true));
+}
 }
 
 router.generateExcelSalesTransactionReport = async function (data,filter, res) {
-    const { startDate, endDate, merchant, article } = filter;
+    const { title, reportTitle, period, generationDate } = await router.generateReportTitle(filter);
+
+   // const { startDate, endDate, merchant, article } = filter;
     try{
         const workbook = new ExcelJS.Workbook();
         const worksheet = workbook.addWorksheet('Rapport');
 
         const  columns = [
             { header: 'Date', key: 'date', width: 15 },
-            { header: 'Client', key: 'merchant', width: 20 },
-            { header: 'Article', key: 'article', width: 20 },
+            ...(filter.merchant ? [] : [{ header: 'Client', key: 'merchant', width: 20 }]),
+            ...(filter.article ? [] : [{ header: 'Article', key: 'article', width: 20 }]),
             { header: 'Quantité', key: 'quantity', width: 15 },
             { header: 'Poids Net', key: 'netWeight', width: 15 },
             { header: 'Prix Unité', key: 'unitPrice', width: 15 },
             { header: 'Prix Total', key: 'totalPrice', width: 15 },
         ];
         worksheet.columns = columns;
-        const reportTitle = [];
-        if (article) {
-            const articleData = await Article.findByPk(article);
-            reportTitle.push(articleData ? `Produit : ${articleData.name}` : '');
-        }
-        if (merchant) {
-            const merchantData = await Merchant.findByPk(merchant);
-            reportTitle.push(merchantData ? `Commerçant : ${merchantData.name}` : '');
-        }
-        let period = '';
-
-        switch (filter.dateRule) {
-            case 'equals': {
-                const formattedDate = filter.startDate
-                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                    : null;
-                period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
-                break;
-            }
-            case 'notEquals': {
-                const formattedDate = filter.startDate
-                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                    : null;
-                period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
-                break;
-            }
-            case 'lowerThan': {
-                const formattedDate = filter.startDate
-                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                    : null;
-                period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
-                break;
-            }
-            case 'greaterThan': {
-                const formattedDate = filter.startDate
-                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                    : null;
-                period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
-                break;
-            }
-            case 'between': {
-                const formattedStartDate = filter.startDate
-                    ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                    : null;
-                const formattedEndDate = filter.endDate
-                    ? new Date(filter.endDate).toLocaleDateString('fr-TN')
-                    : null;
-
-                if (formattedStartDate && formattedEndDate) {
-                    period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
-                } else if (formattedStartDate) {
-                    period = `À partir de : ${formattedStartDate}`;
-                } else if (formattedEndDate) {
-                    period = `Jusqu'à : ${formattedEndDate}`;
-                } else {
-                    period = 'Période non spécifiée';
-                }
-                break;
-            }
-            default: {
-                period = '';
-            }
-        }
-
-        if (period) {
-            reportTitle.push(period);
-        }
 
         worksheet.mergeCells('A1:G1');
-        const dateCell = worksheet.getCell('A1');
-        dateCell.value = `Date de génération : ${new Date().toLocaleDateString('fr-FR')}`;
-        dateCell.font = { name: 'Arial',italic: true, size: 10 };
-        dateCell.alignment = { horizontal: 'right', vertical: 'middle' };
-        worksheet.getRow(1).height = 30;
+        worksheet.getCell('A1').value = generationDate;
+        worksheet.getCell('A1').font = { name: 'Arial', italic: true, size: 10 };
+        worksheet.getCell('A1').alignment = { horizontal: 'right', vertical: 'middle' };
 
         worksheet.mergeCells('A2:G2');
-        const titleCell = worksheet.getCell('A2');
-        titleCell.value = 'Liste des comptes commerçants';
-        titleCell.font = { size: 16, bold: true };
-        titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-        worksheet.getRow(2).height = 40;
-
+        worksheet.getCell('A2').value = reportTitle;
+        worksheet.getCell('A2').font = { size: 16, bold: true };
+        worksheet.getCell('A2').alignment = { horizontal: 'center', vertical: 'middle' };
 
         worksheet.mergeCells('A3:G3');
-        const subTitleCell = worksheet.getCell('A3');
-        subTitleCell.value = reportTitle.join('\n');
-        subTitleCell.font = { size: 12, italic: true };
-        subTitleCell.alignment = { horizontal: 'center', vertical: 'middle',wrapText: true };
-        worksheet.getRow(3).height = 70;
+        worksheet.getCell('A3').value = period;
+        worksheet.getCell('A3').font = { size: 12, italic: true };
+        worksheet.getCell('A3').alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+
         worksheet.addRow([]);
+        worksheet.getRow(1).height = 30;
 
         const headerRow = worksheet.addRow(columns.map((col) => col.header));
         headerRow.font = { bold: true };
@@ -675,8 +614,8 @@ router.generateExcelSalesTransactionReport = async function (data,filter, res) {
 
             worksheet.addRow({
                 date: transaction.date,
-                merchant: transaction.merchant?.name || 'Non spécifié',
-                article: transaction.article?.name || 'Non spécifié',
+                merchant: filter.merchant ? undefined :transaction.merchant?.name || 'Non spécifié',
+                article:  filter.article ? undefined :transaction.article?.name || 'Non spécifié',
                 quantity: transaction.boxes,
                 netWeight: transaction.netWeight,
                 unitPrice: transaction.unitPrice,
