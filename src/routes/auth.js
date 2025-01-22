@@ -21,6 +21,8 @@ router.post('/login', async (req, res) => {
         if (!isPasswordValid) {
             return res.status(401).json({message: 'Invalid credentials'});
         }
+        req.session.username = username;
+        console.log("Session créée:",username);
 
         const token = jwt.sign({userId: user.id}, '94896d7d1c3b5da582e91cf72ba8d230', {expiresIn: '1h'});
         delete user.password;

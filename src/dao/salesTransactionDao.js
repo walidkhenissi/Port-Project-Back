@@ -42,6 +42,22 @@ module.exports = {
             return error;
         }
     },
+    findAll: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const salesTransactions = await SalesTransaction.findAll({
+                where: criteria.where,
+                include: [{model: Article, as: 'article'}, {model: Merchant, as: 'merchant'}, {model: Sale, as: 'sale'}],
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return salesTransactions;
+        } catch (error) {
+            console.error('Error retrieving salesTransactions :', error);
+            return error;
+        }
+    },
     sum: async function (criteria) {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);

@@ -302,7 +302,6 @@ router.checkPaymentInfo = async function (sale) {
 
 router.post('/generateSalesReport', async (req, res) => {
     const { startDate, endDate, producer, merchant, article } = req.body;
-
     try
     {
     const dataToReport = await router.getSalesReportData(req.body);
@@ -325,7 +324,6 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
-   console.log("option1:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
@@ -557,7 +555,7 @@ salesReportData.push([
     }
 
 
-    let generationDate = `Date de génération : ${new Date().toLocaleDateString("fr-FR")}`;
+    let generationDate = `Edité le  : ${new Date().toLocaleDateString("fr-FR")} à ${new Date().toLocaleTimeString("fr-FR")}`;
 
     let docDefinition = {
         pageSize: 'A4',
@@ -589,7 +587,7 @@ salesReportData.push([
                     body: [
                     ...titleRow,
                     ...salesReportData],
-        widths: ['auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', 'auto']
+        widths: ['auto', 'auto', 'auto', 'auto', 'auto', '*', '*', '*', '*', 'auto', 'auto', 'auto']
                 },
             }
             ]
