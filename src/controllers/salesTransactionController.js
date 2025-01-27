@@ -11,9 +11,9 @@ const {CommissionValue, Merchant, PaymentInfo, Article} = require("../models");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
-const ExcelJS = require("exceljs");
+//const ExcelJS = require("exceljs");
 const {forEach} = require("lodash/core");
-
+const xl = require('excel4node');
 router.get('/list', async (req, res) => {
     let criteria = req.body;
     try {
@@ -344,7 +344,7 @@ router.generateReportTitle = async function (filter) {
     if (merchant) {
         const merchantData = await Merchant.findByPk(merchant);
         if (merchantData) {
-            title = `Liste Des Achats Du Commerçant : ${merchantData.name.toUpperCase()}`;
+            title = `Liste Des Achats \n Du Commerçant : ${merchantData.name.toUpperCase()}`;
             merchantName = merchantData.name;
         }
     }
@@ -374,8 +374,7 @@ router.generateReportTitle = async function (filter) {
     reportTitle.push(title);
     if (articleName) reportTitle.push(articleName);
 
-    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n 
-    par :`;
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n  par :`;
 
     return {
         title, reportTitle: reportTitle.join('\n'), period, generationDate,
@@ -394,63 +393,95 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
         {text: 'Poid Net', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Prix Unite', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Prix Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}].filter(Boolean));
+    const filteredData = data.filter(transaction => {
+        if (!filter.merchant && !filter.article) return true;
+
+        return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant) &&
+            (!filter.article || transaction.article?.id === filter.article);
+    });
+
+    const groupedByDate = _.groupBy(filteredData, item => item.date);
 
     let salesReportData = [];
     let totalPriceSum = 0;
     let totalQuantitySum = 0;
     let totalWeightSum = 0;
-    data.sort((a, b) => new Date(b.date) - new Date(a.date));
-    for (const transaction of data) {
-            totalQuantitySum += transaction.boxes;
-            totalWeightSum += transaction.netWeight;
-            totalPriceSum += transaction.totalPrice;
-            salesReportData.push([
-                {text: transaction.date, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                {text: transaction.sale.producerName.toUpperCase(), fontSize: 9, alignment: 'center', margin: [0, 3]},
-                !filter.merchant ? {text: transaction.merchant?.name.toUpperCase() || 'Non spécifié', fontSize: 9,  alignment: 'center', margin: [0, 3] } : null,
-                !filter.article ? {text: transaction.article ? transaction.article.name : 'Non spécifié', fontSize: 9, alignment: 'center' , margin: [0, 3]} : null,
-                {text: transaction.boxes, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                {text: transaction.netWeight, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                {text: transaction.unitPrice, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                {text: transaction.totalPrice.toLocaleString('fr-TN', {
-                        style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2
-                    }), fontSize: 9, alignment: 'center', margin: [0, 3]},
-            ].filter(Boolean));
-    }
+
+    filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    Object.keys(groupedByDate).forEach(date => {
+        const dateGroup = groupedByDate[date];
+        const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+        Object.keys(groupedByProducer).forEach(producer => {
+            const producerGroup = groupedByProducer[producer];
+            const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
+            Object.keys(groupedByMerchant).forEach(merchant => {
+                const merchantGroup = groupedByMerchant[merchant];
+                const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
+                Object.keys(groupedByArticle).forEach(article => {
+                    const articleGroup = groupedByArticle[article];
+
+                    let isFirstRow = true;
+
+                    articleGroup.forEach((transaction, index) => {
+                        totalQuantitySum += transaction.boxes;
+                        totalWeightSum += transaction.netWeight;
+                        totalPriceSum += transaction.totalPrice;
+
+                        const row = [
+                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle',margin: [0, 3]} : null,
+                            isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle',margin: [0, 3]} : null,
+                            !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle'} : null) : null,
+                            !filter.article ? (isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle'} : null) : null,
+                            {text: transaction.boxes, fontSize: 9, alignment: 'center', margin: [0, 3]},
+                            {text: transaction.netWeight, fontSize: 9, alignment: 'center', margin: [0, 3]},
+                            {text: transaction.unitPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', margin: [0, 3]},
+                            {text: transaction.totalPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', margin: [0, 3]}
+                        ].filter(Boolean);
+
+                        salesReportData.push(row);
+
+
+                    });
+                });
+            });
+        });
+    });
 
     salesReportData.push([{
-        text: 'Total',
-        fontSize: 10,
-        alignment: 'center',
-        bold: true,colSpan: 4 - (filter.article ? 1 : 0) - (filter.merchant ? 1 : 0) , margin: [0, 3]},
-        '',
-        ...(filter.merchant ? [] : ['']),
-        ...(filter.article ? [] : ['']),
-        {text: totalQuantitySum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
-        {text: totalWeightSum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
-        '',
-        {text: totalPriceSum.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
-    ]);
+          text: 'Total',
+          fontSize: 10,
+          alignment: 'center',
+          bold: true,colSpan: 4 - (filter.article ? 1 : 0) - (filter.merchant ? 1 : 0) , margin: [0, 3]},
+          '',
+          ...(filter.merchant ? [] : ['']),
+          ...(filter.article ? [] : ['']),
+          {text: totalQuantitySum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
+          {text: totalWeightSum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
+          '',
+          {text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3]},
+      ]);
+
 
 
     let docDefinition = {
         pageSize: 'A4',
-        pageMargins: [25, 25, 25, 25],
+        pageMargins: [25, 25, 25,25],
         pageOrientation: 'portrait',
         defaultStyle: {
             fontSize: 10, columnGap: 20
         },
         content: [
-            {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10], // [left, top, right, bottom]
-                lineHeight: 1.5 },
+            {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
-            {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10],lineHeight: 1.2},
+            {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]},
     //${username}
             {
             columns: [{
+
                 table: {
                     body: [...titleRow, ...salesReportData],
-                    widths: [50, 95,!filter.merchant ? 90 : 0, !filter.article ? 75 : 0, 40, 40, 45, '*'].filter(Boolean),
+                    widths: ['auto', 95,!filter.merchant ? 75 : 0, !filter.article ? 75 : 0, 40, 40, 45, '*'].filter(Boolean),
                 },
             },],
         },],
@@ -500,101 +531,162 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
 }
 
 router.generateExcelSalesTransactionReport = async function (data, filter, res) {
-    const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter);
-
     try {
-        const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet('Rapport');
+        const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter);
 
-        const columns = [
-            {header: 'Date', key: 'date', width: 15},
-            ...(filter.merchant ? [] : [{header: 'Client', key: 'merchant', width: 20}]),
-            ...(filter.article ? [] : [{header: 'Article', key: 'article', width: 20}]),
-            {header: 'Quantité', key: 'quantity', width: 15},
-            {header: 'Poids Net', key: 'netWeight', width: 15},
-            {header: 'Prix Unité', key: 'unitPrice', width: 15},
-            {header: 'Prix Total', key: 'totalPrice', width: 15},];
-        worksheet.columns = columns;
+        let wb = new xl.Workbook();
+        let ws = wb.addWorksheet('Rapport');
 
-        worksheet.mergeCells('A1:G1');
-        worksheet.getCell('A1').value = generationDate;
-        worksheet.getCell('A1').font = {name: 'Arial', italic: true, size: 10};
-        worksheet.getCell('A1').alignment = {horizontal: 'right', vertical: 'middle'};
+        ws.cell(1, 1, 1, 8, true)
+            .string(generationDate)
+            .style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+        ws.cell(2, 1, 2, 8, true)
+            .string(reportTitle)
+            .style({
+                font: {size: 12, bold: true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+        ws.cell(3, 1, 3, 8, true)
+            .string(period)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
 
-        worksheet.mergeCells('A2:G2');
-        worksheet.getCell('A2').value = reportTitle;
-        worksheet.getCell('A2').font = {size: 16, bold: true};
-        worksheet.getCell('A2').alignment = {horizontal: 'center', vertical: 'middle'};
+        ws.row(2).setHeight(40);
+        ws.cell(4, 1).string('');
 
-        worksheet.mergeCells('A3:G3');
-        worksheet.getCell('A3').value = period;
-        worksheet.getCell('A3').font = {size: 12, italic: true};
-        worksheet.getCell('A3').alignment = {horizontal: 'center', vertical: 'middle', wrapText: true};
+        const titleRow = ['Date', 'Producteur',  (filter.merchant ?'': 'Client') , (filter.article ? '' : 'Article'),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
 
-        worksheet.addRow([]);
-        worksheet.getRow(1).height = 30;
-
-        const headerRow = worksheet.addRow(columns.map((col) => col.header));
-        headerRow.font = {bold: true};
-        headerRow.alignment = {horizontal: 'center', vertical: 'middle'};
-        headerRow.eachCell((cell) => {
-            cell.fill = {
-                type: 'pattern', pattern: 'solid', fgColor: {argb: 'FFEEEEEE'},
-            };
-            cell.border = {
-                top: {style: 'thin'},
-                left: {style: 'thin'},
-                bottom: {style: 'thin'},
-                right: {style: 'thin'},
-            };
+        const headerStyle = wb.createStyle({
+            font: { bold: true, size: 10 },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
+            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
+        titleRow.forEach((title, index) => {
+            ws.cell(5, index + 1).string(title).style(headerStyle);
+            const columnWidth = title.length + 5;
+            ws.column(index + 1).setWidth(columnWidth);
+        });
+        const rowStyle = wb.createStyle({
+            font: { size: 9 },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            border: {
+                left: { style: 'thin', color: '#000000' },
+                right: { style: 'thin', color: '#000000' },
+                top: { style: 'thin', color: '#000000' },
+                bottom: { style: 'thin', color: '#000000' }
+            }
+        });
+        const rowStyleRight = wb.createStyle({
+            font: { size: 9 },
+            alignment: { horizontal: 'right', vertical: 'center' },
+            border: {
+                left: { style: 'thin', color: '#000000' },
+                right: { style: 'thin', color: '#000000' },
+                top: { style: 'thin', color: '#000000' },
+                bottom: { style: 'thin', color: '#000000' }
+            }
+        });
+
+        let rowIndex = 6;
+        const filteredData = data.filter(transaction => {
+            return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
+                (!filter.article || transaction.article?.id === filter.article);
+        });
+
+        const groupedByDate = _.groupBy(filteredData, item => item.date);
 
         let totalPriceSum = 0;
         let totalQuantitySum = 0;
         let totalWeightSum = 0;
 
-        data.forEach((transaction) => {
-            totalQuantitySum += transaction.boxes;
-            totalWeightSum += transaction.netWeight;
-            totalPriceSum += transaction.totalPrice;
 
-            worksheet.addRow({
-                date: transaction.date,
-                merchant: filter.merchant ? undefined : transaction.merchant?.name || 'Non spécifié',
-                article: filter.article ? undefined : transaction.article?.name || 'Non spécifié',
-                quantity: transaction.boxes,
-                netWeight: transaction.netWeight,
-                unitPrice: transaction.unitPrice,
-                totalPrice: transaction.totalPrice.toLocaleString('fr-TN', {
-                    style: 'decimal', minimumFractionDigits: 2,
-                }),
+        Object.keys(groupedByDate).forEach(date => {
+            const dateGroup = groupedByDate[date];
+            const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+            let isFirstDateRow = true;
+            Object.keys(groupedByProducer).forEach(producer => {
+                const producerGroup = groupedByProducer[producer];
+                const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
+
+                Object.keys(groupedByMerchant).forEach(merchant => {
+                    const merchantGroup = groupedByMerchant[merchant];
+                    const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
+                    let isFirstMerchantRow = true;
+                    Object.keys(groupedByArticle).forEach(article => {
+                        const articleGroup = groupedByArticle[article];
+                        let isFirstArticleRow = true;
+
+                        articleGroup.forEach((transaction, index) => {
+                            totalQuantitySum += transaction.boxes || 0;
+                            totalWeightSum += transaction.netWeight || 0;
+                            totalPriceSum += transaction.totalPrice || 0;
+
+                            if (isFirstDateRow) {
+                                ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
+                                    .string(transaction.date || "Non spécifié")
+                                    .style(rowStyle);
+                                isFirstDateRow = false;
+                            }
+                            if (isFirstMerchantRow){
+                                ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true)
+                                    .string(transaction.sale.producerName.toUpperCase() || "Non spécifié")
+                                    .style(rowStyle);
+                                isFirstMerchantRow = false;
+                            }
+
+                            if (!filter.merchant ) {
+                                ws.cell(rowIndex, 3, rowIndex + merchantGroup.length - 1, 3, true)
+                                    .string(transaction.merchant?.name || "Non spécifié")
+                                    .style(rowStyle);
+                            }
+
+                            if (!filter.article ) {
+                                ws.cell(rowIndex, 4, rowIndex + articleGroup.length - 1, 4, true)
+                                    .string(transaction.article?.name || "Non spécifié")
+                                    .style(rowStyle);
+
+                            }
+
+                            let colIndex = 5;
+                            if (filter.merchant) colIndex -= 1;
+                            if (filter.article) colIndex -= 1;
+                            ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle);
+                            ws.cell(rowIndex, colIndex + 1).number(transaction.netWeight || 0).style(rowStyle);
+                            ws.cell(rowIndex, colIndex + 2).string(transaction.unitPrice.toLocaleString("fr-TN", { style: "decimal", minimumFractionDigits: 2 })|| "0.00").style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex + 3).string(transaction.totalPrice.toLocaleString("fr-TN", { style: "decimal", minimumFractionDigits: 2 })|| "0.00").style(rowStyleRight);
+
+                            rowIndex++;
+                             isFirstDateRow = false;
+
+                        });
+                    });
+                });
             });
         });
-
-        worksheet.addRow({
-            date: 'Total',
-            merchant: '',
-            article: '',
-            quantity: totalQuantitySum,
-            netWeight: totalWeightSum,
-            unitPrice: '',
-            totalPrice: totalPriceSum.toLocaleString('fr-TN', {
-                style: 'decimal', minimumFractionDigits: 2,
-            }),
+        let totalStartCol = 1;
+        let totalEndCol = 4;
+        if (filter.merchant) totalEndCol -= 1;
+        if (filter.article) totalEndCol -= 1;
+        const totalStyle = wb.createStyle({
+            font: { size: 10, bold: true },
+            alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
+            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
         });
-        worksheet.eachRow((row, rowNumber) => {
-            row.eachCell((cell) => {
-                cell.border = {
-                    top: {style: 'thin'},
-                    left: {style: 'thin'},
-                    bottom: {style: 'thin'},
-                    right: {style: 'thin'},
-                };
-                if (rowNumber === 2 || rowNumber === 4) {
-                    cell.font = {bold: true};
-                    cell.alignment = {horizontal: 'center', vertical: 'middle'};
-                }
-            });
+        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true)
+            .string('Total')
+            .style(totalStyle)
+        const totalData = [totalQuantitySum, totalWeightSum, '', totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })];
+
+        totalData.forEach((value, colIndex) => {
+            ws.cell(rowIndex, totalEndCol + 1 + colIndex)
+                .string(value.toString())
+                .style(totalStyle);
         });
 
         const fileName = "achatClient.xlsx";
@@ -604,13 +696,17 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
         }
         const filePath = path.join(excelFile, fileName);
 
-        await workbook.xlsx.writeFile(filePath);
-        res.status(201).json(new Response(fileName));
-
-
-    } catch (error) {
-        console.error("Erreur lors de la génération du fichier Excel :", error);
-        res.status(500).json({success: false, message: error.message});
+        wb.write(filePath,function (err, stats){
+            if (err) {
+                console.error("Error generating Excel file:", err);
+                return res.status(500).send('Error generating Excel file');
+            }
+            res.status(201).json(new Response(fileName));
+            res.download(filePath);
+        });
+    } catch (err) {
+        console.error("Erreur lors de la génération du fichier Excel:", err);
+        res.status(500).json({ success: false, message: err.message });
     }
 
 };
