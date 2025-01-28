@@ -375,21 +375,28 @@ router.getSoldeProducteurReportData = async function (options) {
     let balances= await dao.find(criteria);
     return balances;
 }
-
-
 router.generateReportProducteurTitle = async function (filter) {
-    const {producer, solde1, solde2, soldeRule} = filter;
-    console.log("filter:",filter);
-    let title = 'Soldes Des Armateurs';
-    let reportTitle = [];
+    const {producer, solde1, solde2, soldeRule,creditType, debitType} = filter;
+    let title='';
     let solde = '';
     let producerName = '';
     if (producer) {
         const producerData = await Shipowner.findByPk(producer);
         if(producerData){
-            title = `Solde du Armateur : ${producerData.name.toUpperCase()}`;
-            producerName = producerData.name;
+           title = ` Armateur : ${producerData.name.toUpperCase()}`;
+            producerName = producerData.name.toUpperCase();
         }
+    }
+    const titles = {};
+    if (creditType) {
+        titles.credit = producerName
+            ? `Solde de l'Armateur Créditeurs `
+            : 'Solde des Armateurs Créditeurs';
+    }
+    if (debitType) {
+        titles.debit = producerName
+            ? `Solde de l'Armateur Débiteurs `
+            : 'Soldes des Armateurs Débiteurs';
     }
 
     switch (soldeRule) {
@@ -414,18 +421,16 @@ router.generateReportProducteurTitle = async function (filter) {
             solde = '';
     }
 
-    reportTitle.push(title);
-
     const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \n par :`;
 
     return {
-        title, reportTitle: reportTitle.join('\n'), solde, generationDate,
+        titles, solde , title,generationDate
     };
 }
 
 router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
-    const {title, reportTitle, solde, generationDate} = await router.generateReportProducteurTitle (filter);
-    const { creditType, debitType } = filter;
+    const { titles, solde,title, generationDate} = await router.generateReportProducteurTitle (filter);
+   // const { creditType, debitType } = filter;
     let titleRowC = [];
     let titleRowD = [];
     titleRowC.push([
@@ -484,18 +489,14 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
         { text: totalCreditSolde.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]}
     ]);
     let pdfContent = [
-        { text: reportTitle, fontSize: 14, alignment: 'center', decoration: 'underline', font: 'Roboto', bold: true, margin: [0, 10] },
+        { text: title, fontSize: 14, alignment: 'center', decoration: 'underline', font: 'Roboto', bold: true, margin: [0, 10] },
         { text: solde, fontSize: 14, alignment: 'center', margin: [0, 6] },
         { text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10] }
     ];
 
-    if (creditType) {
-        const producerName = creditType.shipOwner?.name || null; // Supposez que 'armateurName' contient le nom de l'armateur filtré
-        const title = producerName
-            ? `Liste de l'Armateur Créditeurs : ${producerName}`
-            : 'Liste des Armateurs Créditeurs';
+    if (filter.creditType && titles.credit) {
         pdfContent.push(
-            {text: title, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+            {text: titles.credit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -508,12 +509,12 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
     }
 
 
-    if (debitType) {
-        if (creditType) {
+    if (filter.debitType && titles.debit) {
+        if (filter.creditType) {
             pdfContent.push({text: '', pageBreak: 'after'});
         }
-        pdfContent.push(
-            {text: ' Liste des Armateurs Débiteurs ', fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+         pdfContent.push(
+            {text:titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -580,8 +581,8 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
 }
 router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
     try {
-        const { title, reportTitle, solde, generationDate } = await router.generateReportProducteurTitle(filter);
-        const { creditType, debitType } = filter;
+        const { titles, solde,title, generationDate } = await router.generateReportProducteurTitle(filter);
+       const { creditType, debitType } = filter;
 
         const  wb = new xl.Workbook();
         const headerStyle = wb.createStyle({
@@ -610,11 +611,11 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
                 bottom: { style: 'thin', color: '#000000' }
             }
         });
-        const addSheet = (sheetName, titleRow, reportData, totalSolde) =>{
+        const addSheet = (sheetName, titleRow, reportData, totalSolde,titles) =>{
             const  ws = wb.addWorksheet(sheetName);
 
         ws.cell(1, 1, 1, 2, true).string(generationDate).style({font: {name: 'Arial', italic: true, size: 10}, alignment: {horizontal: 'right', vertical: 'center'}});
-        ws.cell(2, 1, 2, 2, true).string(reportTitle).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
+        ws.cell(2, 1, 2, 2, true).string(titles).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
         ws.cell(3, 1, 3, 2, true).string(solde).style({font: {size: 12, italic: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}});
 
             titleRow.forEach((header, index) => {
@@ -631,11 +632,10 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
                 if (typeof cell === 'string') {
                     ws.cell(rowIndex + 6, colIndex + 1).string(cell).style(rowStyle);
                 } else {
-                    ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight);
+                    ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00" });
                 }
             });
         });
-
 
             ws.cell(reportData.length + 6, 1).string('Total').style(
                 { font: {size: 10, bold: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}, border: {
@@ -657,7 +657,6 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
         ws.column(2).setWidth(40);
     };
 
-
     let creditReportData = [];
     let debitReportData = [];
     let totalCreditSolde = 0;
@@ -667,18 +666,12 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
         if (balance.shipOwner && balance.shipOwner.name) {
             const name = balance.shipOwner.name.toUpperCase();
             const balanceValue = balance.balance;
-            const formattedBalanceValue = balanceValue.toLocaleString('fr-TN', {
-                style: 'decimal',
-                minimumFractionDigits: 2,
-             });
-
-
             if (balanceValue > 0) {
                 totalCreditSolde += balanceValue;
-                creditReportData.push([name, formattedBalanceValue]);
+                creditReportData.push([name, balanceValue]);
             } else if (balanceValue < 0) {
-                totalDebitSolde += balanceValue;
-                debitReportData.push([name, formattedBalanceValue]);
+                totalDebitSolde += Math.abs(balanceValue);
+                debitReportData.push([name, Math.abs(balanceValue)]);
             }
         }
     }
@@ -688,7 +681,7 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
             { text: 'Client', alignment: 'center' },
             { text: 'Solde', alignment: 'center' },
         ];
-        addSheet('Armateurs Créditeurs', titleRowC, creditReportData, totalCreditSolde);
+        addSheet('Armateurs Créditeurs', titleRowC, creditReportData, totalCreditSolde,titles.credit);
     }
 
     if (debitType) {
@@ -696,11 +689,8 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
             { text: 'Client', alignment: 'center' },
             { text: 'Solde', alignment: 'center' },
         ];
-        addSheet('Armateurs Débiteurs', titleRowD, debitReportData, totalDebitSolde);
+        addSheet('Armateurs Débiteurs', titleRowD, debitReportData, totalDebitSolde,titles.debit);
     }
-
-
-
         const fileName = "SoldeArmateur.xlsx";
         const excelFile = tools.Excel_PATH;
         if (!fs.existsSync(excelFile)) {
@@ -728,13 +718,13 @@ router.post('/generateReportSoldeCommercant', async (req, res) => {
 
     try
     {
-        const dataToReport = await router.getSoldeReportData(req.body);
+        const dataToReport = await router.getSoldeCommercantReportData(req.body);
         const { creditType, debitType } = req.body;
         if (creditType || debitType) {
             if (req.body.pdfType) {
-            router.generatePDFSoldeReport(dataToReport,req.body, res);
+            router.generatePDFSoldeCommercantReport(dataToReport,req.body, res);
         } else if (req.body.excelType) {
-                router.generateExcelSoldeReport(dataToReport,req.body, res);
+                router.generateExcelSoldeCommercantReport(dataToReport,req.body, res);
             }
         }
             else{
@@ -751,7 +741,7 @@ router.post('/generateReportSoldeCommercant', async (req, res) => {
     }
 });
 
-router.getSoldeReportData = async function (options) {
+router.getSoldeCommercantReportData = async function (options) {
     let criteria = {where: {}};
     if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
         switch (options.soldeRule) {
@@ -789,19 +779,29 @@ router.getSoldeReportData = async function (options) {
 }
 
 
-router.generateReportTitle = async function (filter) {
-    const {merchant, solde1, solde2, soldeRule} = filter;
-    let title = 'Soldes Des Clients';
-    let reportTitle = [];
+router.generateReportCommercantTitle = async function (filter) {
+    const {merchant, solde1, solde2, soldeRule,creditType, debitType} = filter;
+    let title = '';
     let solde = '';
     let merchantName = '';
 
     if (merchant) {
         const merchantData = await Merchant.findByPk(merchant);
         if (merchantData) {
-          //  title = `Solde du Client : ${merchantData.name}`;
+            title = `Client : ${merchantData.name}`;
             merchantName = merchantData.name;
         }
+    }
+    const titles = {};
+    if (creditType) {
+        titles.credit = merchantName
+            ? `Solde du Client Créditeurs `
+            : 'Solde des Clients Créditeurs';
+    }
+    if (debitType) {
+        titles.debit = merchantName
+            ? `Solde du Client Débiteurs `
+            : 'Soldes des Clients Débiteurs';
     }
 
 
@@ -827,17 +827,16 @@ router.generateReportTitle = async function (filter) {
             solde = '';
     }
 
-    reportTitle.push(title);
 
     const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \n par : `;
 
     return {
-        title, reportTitle: reportTitle.join('\n'), solde, generationDate,
+        titles, solde, title, generationDate,
     };
 }
 
-router.generatePDFSoldeReport = async function (data, filter, res) {
-    const {title, reportTitle, solde, generationDate} = await router.generateReportTitle(filter);
+router.generatePDFSoldeCommercantReport = async function (data, filter, res) {
+    const {titles, solde,title, generationDate} = await router.generateReportCommercantTitle(filter);
     const { creditType, debitType } = filter;
     let titleRowC = [];
     let titleRowD = [];
@@ -856,8 +855,7 @@ router.generatePDFSoldeReport = async function (data, filter, res) {
     let totalDebitSolde =0;
     for (const balance of data) {
         if (balance.merchant && balance.merchant.name) {
-            let titre= balance.balance>0 ? 'crediteur':'debiteur';
-            if (balance.balance > 0) {
+             if (balance.balance > 0) {
                 totalCreditSolde +=balance.balance;
                 creditReportData.push([
                     {
@@ -903,9 +901,9 @@ router.generatePDFSoldeReport = async function (data, filter, res) {
         { text: solde, fontSize: 14, alignment: 'center', margin: [0, 6] },
         { text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10] }
     ];
-    if (creditType) {
+    if (filter.creditType && titles.credit) {
         pdfContent.push(
-            {text: ' Liste des Clients Créditeurs ', fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+            {text: titles.credit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -918,12 +916,12 @@ router.generatePDFSoldeReport = async function (data, filter, res) {
     }
 
 
-    if (debitType) {
+    if (debitType && titles.debit) {
         if (creditType) {
             pdfContent.push({text: '', pageBreak: 'after'});
         }
         pdfContent.push(
-            {text: ' Liste des Clients Débiteurs ', fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+            {text:titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -989,9 +987,9 @@ router.generatePDFSoldeReport = async function (data, filter, res) {
     }
 }
 
-router.generateExcelSoldeReport = async function (data, filter, res) {
+router.generateExcelSoldeCommercantReport = async function (data, filter, res) {
     try {
-        const { title, reportTitle, solde, generationDate } = await router.generateReportTitle(filter);
+        const { titles, solde, generationDate } = await router.generateReportCommercantTitle(filter);
         const { creditType, debitType } = filter;
 
         const  wb = new xl.Workbook();
@@ -1021,16 +1019,16 @@ router.generateExcelSoldeReport = async function (data, filter, res) {
                 bottom: { style: 'thin', color: '#000000' }
             }
         });
-        const addSheet = (sheetName, titleRow, reportData, totalSolde) =>{
+        const addSheet = (sheetName, titleRow, reportData, totalSolde,titles) =>{
             const  ws = wb.addWorksheet(sheetName);
 
             ws.cell(1, 1, 1, 2, true).string(generationDate).style({font: {name: 'Arial', italic: true, size: 10}, alignment: {horizontal: 'right', vertical: 'center'}});
-            ws.cell(2, 1, 2, 2, true).string(reportTitle).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
+            ws.cell(2, 1, 2, 2, true).string(titles).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
             ws.cell(3, 1, 3, 2, true).string(solde).style({font: {size: 12, italic: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}});
 
             titleRow.forEach((header, index) => {
                 ws.cell(5, index + 1).string(header.text).style(headerStyle);
-                const columnWidth = title.length + 5;
+                const columnWidth = titles.length + 5;
                 ws.column(index + 1).setWidth(columnWidth);
             });
 
@@ -1041,8 +1039,9 @@ router.generateExcelSoldeReport = async function (data, filter, res) {
                 row.forEach((cell, colIndex) => {
                     if (typeof cell === 'string') {
                         ws.cell(rowIndex + 6, colIndex + 1).string(cell).style(rowStyle);
-                    } else {
-                        ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight);
+                    }
+                    else {
+                        ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00" });
                     }
                 });
             });
@@ -1077,27 +1076,22 @@ router.generateExcelSoldeReport = async function (data, filter, res) {
             if (balance.merchant && balance.merchant.name) {
                 const name = balance.merchant.name.toUpperCase();
                 const balanceValue = balance.balance;
-                const formattedBalanceValue = balanceValue.toLocaleString('fr-TN', {
-                    style: 'decimal',
-                    minimumFractionDigits: 2,
-                  });
                 if (balanceValue > 0) {
                     totalCreditSolde += balanceValue;
-                    creditReportData.push([name, formattedBalanceValue]);
+                    creditReportData.push([name, balanceValue]);
                 } else if (balanceValue < 0) {
-                    totalDebitSolde += balanceValue;
-                    debitReportData.push([name, formattedBalanceValue]);
+                    totalDebitSolde += Math.abs(balanceValue);
+                    debitReportData.push([name, Math.abs(balanceValue)]);
                 }
             }
         }
 
-        // Ajouter les feuilles
         if (creditType) {
             const titleRowC = [
                 { text: 'Client', alignment: 'center' },
                 { text: 'Solde', alignment: 'center' },
             ];
-            addSheet('Client Créditeurs', titleRowC, creditReportData, totalCreditSolde);
+            addSheet('Client Créditeurs', titleRowC, creditReportData, totalCreditSolde,titles.credit);
         }
 
         if (debitType) {
@@ -1105,7 +1099,7 @@ router.generateExcelSoldeReport = async function (data, filter, res) {
                 { text: 'Client', alignment: 'center' },
                 { text: 'Solde', alignment: 'center' },
             ];
-            addSheet('Clients Débiteurs', titleRowD, debitReportData, totalDebitSolde);
+            addSheet('Clients Débiteurs', titleRowD, debitReportData, totalDebitSolde,titles.debit);
         }
 
 
@@ -1131,11 +1125,5 @@ router.generateExcelSoldeReport = async function (data, filter, res) {
     }
 
 };
-
-
-
-
-
-
 
 module.exports = router;
