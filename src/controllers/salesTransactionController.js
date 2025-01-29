@@ -327,7 +327,7 @@ router.getSalesTransactionReportData = async function (options) {
 
     return transasctions;
 
-};
+}
 router.generateReportTitle = async function (filter) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
     let title = 'Liste Des Achats Des Commerçants';
@@ -399,7 +399,7 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
         return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant) &&
             (!filter.article || transaction.article?.id === filter.article);
     });
-
+    filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
     const groupedByDate = _.groupBy(filteredData, item => item.date);
 
     let salesReportData = [];
@@ -407,7 +407,6 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
     let totalQuantitySum = 0;
     let totalWeightSum = 0;
 
-    filteredData.sort((a, b) => new Date(b.date) - new Date(a.date));
 
     Object.keys(groupedByDate).forEach(date => {
         const dateGroup = groupedByDate[date];
@@ -420,19 +419,23 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
                 const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
                 Object.keys(groupedByArticle).forEach(article => {
                     const articleGroup = groupedByArticle[article];
-
                     let isFirstRow = true;
-
+                    const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
+                        const totalRowHeight = rowSpan * fontSize * lineHeight; // Hauteur totale pour les lignes fusionnées
+                        const cellHeight = fontSize; // Hauteur du texte dans la cellule
+                        const verticalMargin = (totalRowHeight - cellHeight) / 2; // Centrage vertical
+                        return [0, verticalMargin, 0, verticalMargin];
+                    };
                     articleGroup.forEach((transaction, index) => {
                         totalQuantitySum += transaction.boxes;
                         totalWeightSum += transaction.netWeight;
                         totalPriceSum += transaction.totalPrice;
 
                         const row = [
-                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle',margin: [0, 3]} : null,
-                            isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle',margin: [0, 3]} : null,
-                            !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle'} : null) : null,
-                            !filter.article ? (isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 9, alignment: 'center', vAlignment: 'middle'} : null) : null,
+                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
+                            isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(producerGroup.length)} : null,
+                            !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name.toUpperCase() || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(merchantGroup.length)} : null) : null,
+                            !filter.article ? (isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 9, alignment: 'center', margin: calculateMargin(articleGroup.length)} : null) : null,
                             {text: transaction.boxes, fontSize: 9, alignment: 'center', margin: [0, 3]},
                             {text: transaction.netWeight, fontSize: 9, alignment: 'center', margin: [0, 3]},
                             {text: transaction.unitPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', margin: [0, 3]},
@@ -440,8 +443,6 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
                         ].filter(Boolean);
 
                         salesReportData.push(row);
-
-
                     });
                 });
             });
@@ -481,7 +482,7 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
 
                 table: {
                     body: [...titleRow, ...salesReportData],
-                    widths: ['auto', 95,!filter.merchant ? 75 : 0, !filter.article ? 75 : 0, 40, 40, 45, '*'].filter(Boolean),
+                    widths: ['auto', 93,!filter.merchant ? 82 : 0, !filter.article ? 85 : 0, 40, 40, 45, '*'].filter(Boolean),
                 },
             },],
         },],
@@ -546,7 +547,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
         ws.cell(2, 1, 2, 8, true)
             .string(reportTitle)
             .style({
-                font: {size: 12, bold: true},
+                font: {size: 12, bold: true,underline:true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
         ws.cell(3, 1, 3, 8, true)
@@ -556,10 +557,10 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
             });
 
-        ws.row(2).setHeight(40);
+        ws.row(2).setHeight(60);
         ws.cell(4, 1).string('');
 
-        const titleRow = ['Date', 'Producteur',  (filter.merchant ?'': 'Client') , (filter.article ? '' : 'Article'),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
+        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , (!filter.article ?'Article' :''  ),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
 
         const headerStyle = wb.createStyle({
             font: { bold: true, size: 10 },
@@ -598,13 +599,12 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
             return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
                 (!filter.article || transaction.article?.id === filter.article);
         });
-
+        filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
         const groupedByDate = _.groupBy(filteredData, item => item.date);
 
         let totalPriceSum = 0;
         let totalQuantitySum = 0;
         let totalWeightSum = 0;
-
 
         Object.keys(groupedByDate).forEach(date => {
             const dateGroup = groupedByDate[date];
@@ -613,56 +613,55 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
             Object.keys(groupedByProducer).forEach(producer => {
                 const producerGroup = groupedByProducer[producer];
                 const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
-
+                let isFirstProducerRow = true;
                 Object.keys(groupedByMerchant).forEach(merchant => {
                     const merchantGroup = groupedByMerchant[merchant];
                     const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
-                    let isFirstMerchantRow = true;
+                   let isFirstMerchantRow = true;
                     Object.keys(groupedByArticle).forEach(article => {
                         const articleGroup = groupedByArticle[article];
-                        let isFirstArticleRow = true;
 
                         articleGroup.forEach((transaction, index) => {
                             totalQuantitySum += transaction.boxes || 0;
                             totalWeightSum += transaction.netWeight || 0;
                             totalPriceSum += transaction.totalPrice || 0;
-
                             if (isFirstDateRow) {
                                 ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
                                     .string(transaction.date || "Non spécifié")
                                     .style(rowStyle);
                                 isFirstDateRow = false;
                             }
-                            if (isFirstMerchantRow){
-                                ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true)
-                                    .string(transaction.sale.producerName.toUpperCase() || "Non spécifié")
-                                    .style(rowStyle);
-                                isFirstMerchantRow = false;
+                            if (isFirstProducerRow) {
+                                ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
+                                isFirstProducerRow = false;
                             }
 
-                            if (!filter.merchant ) {
-                                ws.cell(rowIndex, 3, rowIndex + merchantGroup.length - 1, 3, true)
-                                    .string(transaction.merchant?.name || "Non spécifié")
-                                    .style(rowStyle);
+                            if (!filter.merchant) {
+                                if (isFirstMerchantRow) {
+                                    ws.cell(rowIndex, 3, rowIndex + merchantGroup.length - 1, 3, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    isFirstMerchantRow = false;
+                                }
                             }
 
-                            if (!filter.article ) {
-                                ws.cell(rowIndex, 4, rowIndex + articleGroup.length - 1, 4, true)
-                                    .string(transaction.article?.name || "Non spécifié")
-                                    .style(rowStyle);
-
-                            }
-
-                            let colIndex = 5;
-                            if (filter.merchant) colIndex -= 1;
-                            if (filter.article) colIndex -= 1;
-                            ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle);
-                            ws.cell(rowIndex, colIndex + 1).number(transaction.netWeight || 0).style(rowStyle);
-                            ws.cell(rowIndex, colIndex + 2).string(transaction.unitPrice.toLocaleString("fr-TN", { style: "decimal", minimumFractionDigits: 2 })|| "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 3).string(transaction.totalPrice.toLocaleString("fr-TN", { style: "decimal", minimumFractionDigits: 2 })|| "0.00").style(rowStyleRight);
-
-                            rowIndex++;
-                             isFirstDateRow = false;
+                             if (!filter.article ) {
+                                 if (!filter.merchant) {
+                               ws.cell(rowIndex, 4,rowIndex + articleGroup.length - 1, 4, true)
+                                        .string(transaction.article?.name.toUpperCase() || "Non spécifié")
+                                        .style(rowStyle);
+                                }else {
+                                     ws.cell(rowIndex, 3, rowIndex + articleGroup.length - 1, 3, true)
+                                         .string(transaction.article?.name.toUpperCase() || "Non spécifié")
+                                         .style(rowStyle);
+                                 }
+                             }
+                              let colIndex = 3;
+                                  if (!filter.merchant) colIndex += 1;
+                                  if (!filter.article) colIndex += 1;
+                                ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle);
+                                ws.cell(rowIndex, colIndex + 1).number(transaction.netWeight || 0).style(rowStyle);
+                                ws.cell(rowIndex, colIndex + 2).string(transaction.unitPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                                ws.cell(rowIndex, colIndex + 3).string(transaction.totalPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                                rowIndex++;
 
                         });
                     });
@@ -675,18 +674,21 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
         if (filter.article) totalEndCol -= 1;
         const totalStyle = wb.createStyle({
             font: { size: 10, bold: true },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+        });
+        const totalPriceStyle = wb.createStyle({
+            font: { size: 10, bold: true },
             alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
             border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
         });
-        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true)
-            .string('Total')
-            .style(totalStyle)
+        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
         const totalData = [totalQuantitySum, totalWeightSum, '', totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })];
-
         totalData.forEach((value, colIndex) => {
-            ws.cell(rowIndex, totalEndCol + 1 + colIndex)
+            let currentStyle = (colIndex === totalData.length - 1) ? totalPriceStyle : totalStyle;
+            ws.cell(rowIndex,  totalEndCol + 1 + colIndex)
                 .string(value.toString())
-                .style(totalStyle);
+                .style(currentStyle);
         });
 
         const fileName = "achatClient.xlsx";
