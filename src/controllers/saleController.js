@@ -12,6 +12,8 @@ const fs = require("fs");
 const path = require("path");
 const PdfPrinter = require("pdfmake");
 const ExcelJS = require('exceljs');
+const _ = require("lodash");
+const xl = require("excel4node");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -301,7 +303,7 @@ router.checkPaymentInfo = async function (sale) {
 
 
 router.post('/generateSalesReport', async (req, res) => {
-    const { startDate, endDate, producer, merchant, article } = req.body;
+    const { startDate, endDate, producer, solde1,solde2 } = req.body;
     try
     {
     const dataToReport = await router.getSalesReportData(req.body);
@@ -324,6 +326,7 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
+    console.log("test option:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
@@ -354,248 +357,213 @@ router.getSalesReportData = async function (options) {
                 break;
         }
     }
-    if (options.producer)
+    if (options.producer){
         criteria.where.shipOwnerId = options.producer;
-    let sales = await dao.find(criteria);
-    let availableSales = [];
-    for (const sale of sales) {
-        let _criteria = {where: {saleId: sale.id}};
-        if (!tools.isFalsey(options.merchant))
-            _criteria.where.merchantId = options.merchant;
-        if (!tools.isFalsey(options.article))
-            _criteria.where.articleId = options.article;
-        sale.saleTransactions = await salesTransactionDao.find(_criteria);
-
-        if (sale.saleTransactions && sale.saleTransactions.length)
-            availableSales.push(sale);
     }
-    sales = availableSales;
+    if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
+        switch (options.soldeRule) {
+            case 'equals' : {
+                criteria.where.total= options.solde1;
+                break;
+            }
+            case 'notEquals' : {
+                criteria.where.total = {'!': options.solde1};
+                break;
+            }
+            case 'lowerThan' : {
+                criteria.where.total = {'<=':options.solde1};
+                break;
+            }
+            case 'greaterThan' : {
+                criteria.where.total = {'>=':options.solde1};
+                break;
+            }
+            case 'between' : {
+                if (!tools.isFalsey(options.solde2)) {
+                    criteria.where.total = {'>=': options.solde1, '<=': options.solde2};
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+
+    let sales = await dao.find(criteria);
+
+
     return sales;
 }
-
-router.generatePDFSalesReport = async function (data, filter,res) {
-    const { startDate, endDate, producer, merchant, article } = filter;
-    let hideProducer = !data.some(sale => sale.producerName);
-    let hideMerchant = !data.some(sale => sale.saleTransactions.some(transaction => transaction.merchant));
-    let hideArticle = !data.some(sale => sale.saleTransactions.some(transaction => transaction.article));
-
-    let titleRow = [];
-    titleRow.push([
-        {text: 'Date', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
-        ...(!hideProducer ?  [{text: 'Producteur', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}] : []),
-        ...(!hideArticle ? [{text: 'Article ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}] : []),
-        ...(!hideMerchant ?  [{text: 'Commercant', fontSize: 12, alignment: 'center',bold: true ,fillColor: '#eeeeee'}] : []),
-        {text: 'Prix Unite', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Quantite  ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Poid Net ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Prix Total ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Comission Prod', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Commission Com', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee' },
-        {text: 'Total a payer ', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'},
-        {text: 'Total Net', fontSize: 12, alignment: 'center',bold: true,fillColor: '#eeeeee'}
-    ]);
-    let salesReportData = [];
-    let totalMerchantCommissionSum = 0;
-    let totalProducerCommissionSum=0;
-    let totalToPaySum =0;
-    let totalSum =0;
-    let totalQuantitySum=0;
-    let totalWeightSum =0;
-    let totalPriceSum =0;
-
-    for (const sale of data) {
-        totalMerchantCommissionSum += sale.totalMerchantCommission;
-        totalProducerCommissionSum += sale.totalProducerCommission;
-        totalToPaySum +=sale.totalToPay;
-        totalSum += sale.total;
-        for (const transaction of sale.saleTransactions) {
-            totalQuantitySum +=transaction.boxes;
-            totalWeightSum +=transaction.netWeight;
-            totalPriceSum += transaction.totalPrice;
-            salesReportData.push([
-                {text: sale.date, fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length},
-                ...(!hideProducer ? [{
-                    text: sale.producerName,
-                    fontSize: 10,
-                    alignment: 'center',
-                    rowSpan: sale.saleTransactions.length
-                }] : []),
-                ...(!hideArticle ? [{
-                    text: transaction.article ? transaction.article.name : 'Non spécifié',
-                    fontSize: 10,
-                    alignment: 'center',
-                }] : []),
-                ...(!hideMerchant ? [{
-                    text: transaction.merchant?.name || 'Non spécifié',
-                    fontSize: 10,
-                    alignment: 'center'
-                }] : []),
-                {text: transaction.unitPrice, fontSize: 10, alignment: 'center'},
-                {text: transaction.boxes, fontSize: 10, alignment: 'center'},
-                {text: transaction.netWeight, fontSize: 10, alignment: 'center'},
-                {text: transaction.totalPrice, fontSize: 10, alignment: 'center'},
-                { text: sale.totalProducerCommission,fontSize: 10, alignment: 'center',rowSpan: sale.saleTransactions.length},
-                {text: sale.totalMerchantCommission.toLocaleString('fr-TN', {
-                        style: 'decimal',
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
-                },
-                {text: sale.totalToPay.toLocaleString('fr-TN', {
-                        style: 'decimal',
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
-                },
-                {
-                    text: sale.total.toLocaleString('fr-TN', {
-                        style: 'decimal',
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2
-                    }), fontSize: 10, alignment: 'center', rowSpan: sale.saleTransactions.length
-                }
-
-            ]);
-        }
-    }
-
-salesReportData.push([
-    { text: 'Total', fontSize: 10, alignment: 'center', bold: true,colSpan: 5},
-    ...(!hideProducer ? [''] : []),
-    ...(!hideArticle ? [''] : []),
-    '', '',
-    { text: totalQuantitySum, fontSize: 10, alignment: 'center', bold: true },
-    { text: totalWeightSum, fontSize: 10, alignment: 'center', bold: true },
-    { text: totalPriceSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-    { text: totalProducerCommissionSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-    { text: totalMerchantCommissionSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-    { text: totalToPaySum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-    { text: totalSum.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }), fontSize: 10, alignment: 'center', bold: true },
-]);
-
+router.generateReportTitle = async function (filter) {
+    const {producer, startDate, endDate, dateRule,soldeRule,solde1,solde2} = filter;
+    let title = 'Etats des productions ';
+    let reportTitle = [];
     let period = '';
-    switch (filter.dateRule) {
-        case 'equals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
-            break;
-        }
-        case 'notEquals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
-            break;
-        }
-        case 'lowerThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
-            break;
-        }
-        case 'greaterThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
-            break;
-        }
-        case 'between': {
-            const formattedStartDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            const formattedEndDate = filter.endDate
-                ? new Date(filter.endDate).toLocaleDateString('fr-TN')
-                : null;
-
-            if (formattedStartDate && formattedEndDate) {
-                period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
-            } else if (formattedStartDate) {
-                period = `À partir de : ${formattedStartDate}`;
-            } else if (formattedEndDate) {
-                period = `Jusqu'à : ${formattedEndDate}`;
-            } else {
-                period = 'Période non spécifiée';
-            }
-            break;
-        }
-        default: {
-            period = '';
-        }
-    }
+    let montant = '';
 
     let producerName = '';
     if (producer) {
-            const producerData = await Shipowner.findByPk(producer);
-            producerName = producerData ? `Producteur : ${producerData.name}` : '';
+        const producerData = await Shipowner.findByPk(producer);
+        if(producerData){
+            title=`Etat Du Production : ${producerData.name.toUpperCase()}`;
+            producerName = producerData.name;
+        }
     }
-    let articleName = '';
-    if (article) {
-            const articleData = await Article.findByPk(article);
-            articleName = articleData ? `Produit : ${articleData.name}` : '';
+    switch (dateRule) {
+        case 'equals':
+            period = startDate ? `Le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date exacte non spécifiée';
+            break;
+        case 'notEquals':
+            period = startDate ? `Autre que : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date à exclure non spécifiée';
+            break;
+        case 'lowerThan':
+            period = startDate ? `Avant le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date limite non spécifiée';
+            break;
+        case 'greaterThan':
+            period = startDate ? `Après le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date de début non spécifiée';
+            break;
+        case 'between':
+            const formattedStart = startDate ? new Date(startDate).toLocaleDateString('fr-TN') : null;
+            const formattedEnd = endDate ? new Date(endDate).toLocaleDateString('fr-TN') : null;
+            period = formattedStart && formattedEnd ? `Du : ${formattedStart} Au ${formattedEnd}` : formattedStart ? `À partir de : ${formattedStart}` : formattedEnd ? `Jusqu'à : ${formattedEnd}` : 'Période non spécifiée';
+            break;
+        default:
+            period = '';
     }
-    let merchantName = '';
-    if (merchant) {
-            const merchantData = await Merchant.findByPk(merchant);
-            merchantName = merchantData ? `Commerçant : ${merchantData.name}` : '';
+    switch (soldeRule) {
+        case 'equals':
+            montant = solde1 ? `Solde exact : ${solde1}` : 'solde exacte non spécifiée';
+            break;
+        case 'notEquals':
+            montant = solde1 ? `Autre que : ${solde1}` : 'solde à exclure non spécifiée';
+            break;
+        case 'lowerThan':
+            montant = solde1 ? `Solde inférieur à : ${solde1}` : 'Solde limite non spécifiée';
+            break;
+        case 'greaterThan':
+            montant = solde1 ? `Solde Supérieur à : ${solde1}` : 'Solde de départ non spécifiée';
+            break;
+        case 'between':
+            const formattedStart = solde1 ? solde1 : null;
+            const formattedEnd = solde2 ? solde2 : null;
+            montant = formattedStart && formattedEnd ? `Entre : ${formattedStart} et ${formattedEnd}` : formattedStart ? `À partir de : ${formattedStart}` : formattedEnd ? `Jusqu'à : ${formattedEnd}` : 'Période non spécifiée';
+            break;
+        default:
+            montant = '';
     }
-    let reportTitle = 'Etat des ventes';
-    let additionalParts = [];
-    if (producerName) additionalParts.push(producerName);
-    if (articleName) additionalParts.push(articleName);
-    if (merchantName) additionalParts.push(merchantName);
+    reportTitle.push(title);
 
-    if (period) {
-        reportTitle +=  '\n' + additionalParts.join(' | ') + '\n' + period;
-    } else if (additionalParts.length > 0) {
-        reportTitle +=  ':'+additionalParts.join(' | ');
-    }
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n  par :`;
+    return {
+        title, reportTitle: reportTitle.join('\n'), period,montant, generationDate
+    };
+}
 
+router.generatePDFSalesReport = async function (data, filter,res) {
+    const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter);
+    let titleRow = [];
+    titleRow.push([
+        {text: 'Date', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3] },
+        !filter.producer ? {text: 'Producteur', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]} : null,
+        {text: 'Comission ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
+        {text: 'Total a payer ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
+        {text: 'Paiement ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
+        {text: 'Total Net', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]}
+    ].filter(Boolean));
+    let salesReportData = [];
+    let totalProducerCommissionSum=0;
+    let totalSum =0;
+    let totalToPaySum=0;
+    const filteredData = data.filter(sale => {
+        if (!filter.producer && !filter.solde) return true;
+        return (!filter.producer ||  sale.shipOwnerId === parseInt(filter.producer)) &&
+            (!filter.solde || sale.total === filter.solde);
+    });
 
-    let generationDate = `Edité le  : ${new Date().toLocaleDateString("fr-FR")} à ${new Date().toLocaleTimeString("fr-FR")}`;
+    filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    const groupedByDate = _.groupBy(filteredData, item => item.date);
+
+    Object.keys(groupedByDate).forEach(date => {
+        const dateGroup = groupedByDate[date];
+        const groupedByProducer = _.groupBy(dateGroup, item => item.producerName);
+        Object.keys(groupedByProducer).forEach(producer => {
+            const producerGroup = groupedByProducer[producer];
+            let isFirstRow = true;
+            const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
+                const totalRowHeight = rowSpan * fontSize * lineHeight;
+                const cellHeight = fontSize;
+                const verticalMargin = (totalRowHeight - cellHeight) / 2;
+                return [0, verticalMargin, 0, verticalMargin];
+            };
+            producerGroup.forEach((sale, index) => {
+                totalProducerCommissionSum += sale.totalProducerCommission;
+                totalToPaySum += sale.totalToPay;
+                totalSum += sale.total;
+
+                const row = [
+                    isFirstRow ? {text: sale.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(dateGroup.length)} : null,
+                    !filter.producer ? (isFirstRow ? {text: sale.producerName?.toUpperCase()|| "Non spécifié", rowSpan: producerGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(producerGroup.length)}: null) : null,
+                    {text: sale.totalProducerCommission.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'},
+                    {text: sale.totalToPay.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'},
+                    {text: sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié', fontSize: 9, alignment: 'center'},
+                    {text: sale.total.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'}
+
+                ].filter(Boolean);
+                salesReportData.push(row);
+                console.log("Données du rapport : ", salesReportData);
+            });
+        });
+    });
+
+salesReportData.push([
+    { text: 'Total', fontSize: 10, alignment: 'center', bold: true,colSpan: filter.producer ? 1 : 2,margin: [0, 3]},
+    ...(filter.producer? [] : ['']),
+    { text: totalProducerCommissionSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
+    { text: totalToPaySum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
+   '',
+    { text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
+]);
 
     let docDefinition = {
         pageSize: 'A4',
         pageMargins: [25, 25, 25, 25],
-        pageOrientation: 'landscape',
+        pageOrientation: 'portrait',
         defaultStyle: {
-            fontSize: 5,
+            fontSize: 10,
             columnGap: 20
         },
-        content: []
-    };
-    docDefinition.content.push({
-        text: reportTitle,
-        fontSize: 22,
-        alignment: 'center',
-        margin: [0, 20]
-    });
-
-    docDefinition.content.push({
-        text: generationDate,
-        fontSize: 10,
-        alignment: 'right',
-        margin: [0, 0, 0, 10]
-    });
-    docDefinition.content.push({
-        columns: [
+        content: [
+            {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
+            {text: period, fontSize: 14, alignment: 'center', margin: [0, 3]},
+            {text: montant, fontSize: 14, alignment: 'center', margin: [0, 3]},
+            {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]},
+            //${username}
             {
-                table: {
-                    body: [
-                    ...titleRow,
-                    ...salesReportData],
-        widths: ['auto', 'auto', 'auto', 'auto', 'auto', '*', '*', '*', '*', 'auto', 'auto', 'auto']
-                },
-            }
-            ]
-    });
+                columns: [
+                    {
+                        table: {
+                            body: [...titleRow, ...salesReportData],
+                            widths: ['auto', !filter.producer ? 95 : 0, 90, 100, 100, '*'].filter(Boolean)
+                        },
+                    },] ,
 
-    docDefinition.content.push('\n');
+            },],
 
-    // var PdfPrinter = require('pdfmake');
+        footer: function (currentPage, pageCount) {
+            return {
+                columns: [
+                    {
+                        text: ` Page ${currentPage} / ${pageCount}`,
+                        alignment: 'right',
+                        margin: [0, 0, 40, 80],
+                        fontSize: 10
+                    },
+                ],
+            };
+        },
+    };
+
     var fonts = {
         Roboto: {
             normal: './assets/fonts/roboto/Roboto-Regular.ttf',
@@ -626,6 +594,169 @@ salesReportData.push([
     }
 }
 
+
+router.generateExcelSalesReport= async function (data, filter, res) {
+    try {
+        const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter);
+
+        let wb = new xl.Workbook();
+        let ws = wb.addWorksheet('Rapport');
+
+        ws.cell(1, 1, 1, 6, true)
+            .string(generationDate)
+            .style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+        ws.cell(2, 1, 2, 6, true)
+            .string(reportTitle)
+            .style({
+                font: {size: 12, bold: true,underline:true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+        ws.cell(3, 1, 3, 6, true)
+            .string(period)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
+        ws.cell(4, 1, 4, 6, true)
+            .string(montant)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
+
+        const titleRow = ['Date', (!filter.producer ? 'Producteur':''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
+
+        const headerStyle = wb.createStyle({
+            font: { bold: true, size: 10 },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
+            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+        });
+        titleRow.forEach((title, index) => {
+            ws.cell(5, index + 1).string(title).style(headerStyle);
+            const columnWidth = title.length + 5;
+            ws.column(index + 1).setWidth(columnWidth);
+        });
+        const rowStyle = wb.createStyle({
+            font: { size: 9 },
+            alignment: { horizontal: 'center', vertical: 'center' },
+            border: {
+                left: { style: 'thin', color: '#000000' },
+                right: { style: 'thin', color: '#000000' },
+                top: { style: 'thin', color: '#000000' },
+                bottom: { style: 'thin', color: '#000000' }
+            }
+        });
+        const rowStyleRight = wb.createStyle({
+            font: { size: 9 },
+            alignment: { horizontal: 'right', vertical: 'center' },
+            border: {
+                left: { style: 'thin', color: '#000000' },
+                right: { style: 'thin', color: '#000000' },
+                top: { style: 'thin', color: '#000000' },
+                bottom: { style: 'thin', color: '#000000' }
+            }
+        });
+
+        let rowIndex = 6;
+
+        const filteredData = data.filter(sale=> {
+            return (!filter.producer || sale.shipOwnerId === filter.producer) &&
+                (!filter.solde || sale.total === filter.solde);
+        });
+        filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        const groupedByDate = _.groupBy(filteredData, item => item.date);
+
+        let totalProducerCommissionSum=0;
+        let totalSum =0;
+        let totalToPaySum=0;
+
+        Object.keys(groupedByDate).forEach(date => {
+            const dateGroup = groupedByDate[date];
+            const groupedByProducer = _.groupBy(dateGroup, item => item.producerName);
+            let isFirstDateRow = true;
+            Object.keys(groupedByProducer).forEach(producer => {
+                const producerGroup = groupedByProducer[producer];
+                let isFirstProducerRow = true;
+
+                producerGroup.forEach((sale, index) => {
+
+                    totalProducerCommissionSum += sale.totalProducerCommission || 0;
+                    totalToPaySum += sale.totalToPay || 0;
+                    totalSum += sale.total || 0;
+                            if (isFirstDateRow) {
+                                ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
+                                    .string(sale.date || "Non spécifié")
+                                    .style(rowStyle);
+                                isFirstDateRow = false;
+                            }
+                            if (!filter.producer) {
+                                if (isFirstProducerRow) {
+                                    ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(sale.producerName?.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    isFirstProducerRow = false;
+                                }
+                            }
+
+                                let colIndex = 2;
+                                if (!filter.producer) colIndex += 1;
+
+                            ws.cell(rowIndex, colIndex).string(sale.totalProducerCommission.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex + 1).string(sale.totalToPay.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex + 2).string(sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié').style(rowStyle);
+                            ws.cell(rowIndex, colIndex + 3).string(sale.total.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                            rowIndex++;
+                        });
+            });
+        });
+
+        let totalStartCol = 1;
+        let totalEndCol = 2;
+        if (filter.producer) totalEndCol -= 1;
+        const totalStyle = wb.createStyle({
+            font: { size: 10, bold: true },
+            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+        });
+        const totalPriceStyle = wb.createStyle({
+            font: { size: 9, bold: true },
+            alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
+            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+        });
+        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
+        const totalData = [totalProducerCommissionSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), totalToPaySum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), '', totalSum .toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })
+        ];
+        totalData.forEach((value, colIndex) => {
+            ws.cell(rowIndex,  totalEndCol + 1 + colIndex)
+                .string(value.toString())
+                .style(totalPriceStyle);
+        });
+
+        const fileName = "Production.xlsx";
+        const excelFile = tools.Excel_PATH;
+        if (!fs.existsSync(excelFile)) {
+            fs.mkdirSync(excelFile, {recursive: true});
+        }
+        const filePath = path.join(excelFile, fileName);
+
+        wb.write(filePath,function (err, stats){
+            if (err) {
+                console.error("Error generating Excel file:", err);
+                return res.status(500).send('Error generating Excel file');
+            }
+            res.status(201).json(new Response(fileName));
+            res.download(filePath);
+        });
+    } catch (err) {
+        console.error("Erreur lors de la génération du fichier Excel:", err);
+        res.status(500).json({ success: false, message: err.message });
+    }
+
+};
+
+/*
 router.generateExcelSalesReport = async function (data,filter, res) {
     const { startDate, endDate, producer, merchant, article } = filter;
 try {
@@ -803,6 +934,6 @@ try {
 }
 
 };
-
+*/
 
 module.exports = router;
