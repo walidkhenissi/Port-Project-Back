@@ -18,9 +18,22 @@ _ = require('lodash');
 dbDateFormat = "YYYY-MM-DD";
 productSalesAccountKey = "PRODUCT_SALES";
 producerPaymentAccountKey = "PRODUCER_PAYMENT";
-app.use(session({store: new ClusterStore(), secret: 'keyboard cat',
+app.use(session({
+   // store: new ClusterStore(),
+    secret: 'keyboard cat',
     resave: false,
-    saveUninitialized: false}));
+    saveUninitialized: false,
+    cookie: {
+        httpOnly: true,            // Le cookie est inaccessible via JavaScript
+        secure: false,
+        sameSite: 'lax',
+        secure: false,             // `true` en production avec HTTPS
+        maxAge: 1000 * 60 * 60 * 24  // 🔥 24 heures (au lieu de 1h)
+    }
+
+    }));
+
+
 // Middleware
 //app.use(bodyParser.json());
 //app.use(cors());

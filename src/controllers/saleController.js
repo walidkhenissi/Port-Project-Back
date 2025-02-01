@@ -301,16 +301,20 @@ router.checkPaymentInfo = async function (sale) {
     return sale;
 }
 
-
+router.get('/test-session', (req, res) => {
+    console.log("Vérification session :", req.session);
+    res.json({ session: req.session });
+});
 router.post('/generateSalesReport', async (req, res) => {
     const { startDate, endDate, producer, solde1,solde2 } = req.body;
     try
     {
     const dataToReport = await router.getSalesReportData(req.body);
+        const username = req.session.username;
     if (req.body.excelType){
-        router.generateExcelSalesReport(dataToReport,req.body, res);
+        router.generateExcelSalesReport(dataToReport,req.body, res,username);
     }else if (req.body.pdfType){
-        router.generatePDFSalesReport(dataToReport,req.body, res);
+        router.generatePDFSalesReport(dataToReport,req.body, res,username);
     } else{
         // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
         res.status(200).json({
@@ -326,7 +330,6 @@ router.post('/generateSalesReport', async (req, res) => {
 });
 
 router.getSalesReportData = async function (options) {
-    console.log("test option:",options);
     let criteria = {where: {}};
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
@@ -395,7 +398,7 @@ router.getSalesReportData = async function (options) {
 
     return sales;
 }
-router.generateReportTitle = async function (filter) {
+router.generateReportTitle = async function (filter,username) {
     const {producer, startDate, endDate, dateRule,soldeRule,solde1,solde2} = filter;
     let title = 'Etats des productions ';
     let reportTitle = [];
@@ -454,14 +457,14 @@ router.generateReportTitle = async function (filter) {
     }
     reportTitle.push(title);
 
-    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n  par :`;
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\nPar : ${username || "Utilisateur inconnu"}`;
     return {
         title, reportTitle: reportTitle.join('\n'), period,montant, generationDate
     };
 }
 
-router.generatePDFSalesReport = async function (data, filter,res) {
-    const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter);
+router.generatePDFSalesReport = async function (data, filter,res,username) {
+    const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter,username);
     let titleRow = [];
     titleRow.push([
         {text: 'Date', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3] },
@@ -511,7 +514,6 @@ router.generatePDFSalesReport = async function (data, filter,res) {
 
                 ].filter(Boolean);
                 salesReportData.push(row);
-                console.log("Données du rapport : ", salesReportData);
             });
         });
     });
@@ -595,39 +597,39 @@ salesReportData.push([
 }
 
 
-router.generateExcelSalesReport= async function (data, filter, res) {
+router.generateExcelSalesReport= async function (data, filter, res,username) {
     try {
-        const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter);
+        const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter,username);
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
+        const titleRow = ['Date', (!filter.producer ? 'Producteur':''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
 
-        ws.cell(1, 1, 1, 6, true)
+        ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
             .style({
                 font: {name: 'Arial', italic: true, size: 10},
                 alignment: {horizontal: 'right', vertical: 'center'}
             });
-        ws.cell(2, 1, 2, 6, true)
+        ws.cell(2, 1, 2, titleRow.length, true)
             .string(reportTitle)
             .style({
                 font: {size: 12, bold: true,underline:true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
-        ws.cell(3, 1, 3, 6, true)
+        ws.cell(3, 1, 3, titleRow.length, true)
             .string(period)
             .style({
                 font: {size: 12, italic: true},
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
             });
-        ws.cell(4, 1, 4, 6, true)
+        ws.cell(4, 1, 4, titleRow.length, true)
             .string(montant)
             .style({
                 font: {size: 12, italic: true},
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
             });
 
-        const titleRow = ['Date', (!filter.producer ? 'Producteur':''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
 
         const headerStyle = wb.createStyle({
             font: { bold: true, size: 10 },
@@ -635,9 +637,12 @@ router.generateExcelSalesReport= async function (data, filter, res) {
             fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
             border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
+        const tableWidth = 80;
+        const columnCount = titleRow.length;
+        const columnWidth = Math.floor(tableWidth / columnCount);
+
         titleRow.forEach((title, index) => {
             ws.cell(5, index + 1).string(title).style(headerStyle);
-            const columnWidth = title.length + 5;
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
@@ -756,184 +761,6 @@ router.generateExcelSalesReport= async function (data, filter, res) {
 
 };
 
-/*
-router.generateExcelSalesReport = async function (data,filter, res) {
-    const { startDate, endDate, producer, merchant, article } = filter;
-try {
-    const workbook = new ExcelJS.Workbook();
-    const worksheet = workbook.addWorksheet('Sales Report', {
-        pageSetup: { paperSize: 9, orientation: 'landscape' },
-    });
 
-
-    const generationDate = `Date de génération : ${new Date().toLocaleDateString("fr-FR")}`;
-
-    let period = '';
-    switch (filter.dateRule) {
-        case 'equals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Date exacte : ${formattedDate}` : 'Date exacte non spécifiée';
-            break;
-        }
-        case 'notEquals': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Exclure la date : ${formattedDate}` : 'Date à exclure non spécifiée';
-            break;
-        }
-        case 'lowerThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Avant le : ${formattedDate}` : 'Date limite non spécifiée';
-            break;
-        }
-        case 'greaterThan': {
-            const formattedDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            period = formattedDate ? `Après le : ${formattedDate}` : 'Date de début non spécifiée';
-            break;
-        }
-        case 'between': {
-            const formattedStartDate = filter.startDate
-                ? new Date(filter.startDate).toLocaleDateString('fr-TN')
-                : null;
-            const formattedEndDate = filter.endDate
-                ? new Date(filter.endDate).toLocaleDateString('fr-TN')
-                : null;
-
-            if (formattedStartDate && formattedEndDate) {
-                period = `Période : ${formattedStartDate} à ${formattedEndDate}`;
-            } else if (formattedStartDate) {
-                period = `À partir de : ${formattedStartDate}`;
-            } else if (formattedEndDate) {
-                period = `Jusqu'à : ${formattedEndDate}`;
-            } else {
-                period = 'Période non spécifiée';
-            }
-            break;
-        }
-        default: {
-            period = '';
-        }
-    }
-    let producerName = '';
-    if (producer) {
-        const producerData = await Shipowner.findByPk(producer);
-        producerName = producerData ? `Producteur : ${producerData.name}` : '';
-    }
-    let articleName = '';
-    if (article) {
-        const articleData = await Article.findByPk(article);
-        articleName = articleData ? `Produit : ${articleData.name}` : '';
-    }
-    let merchantName = '';
-    if (merchant) {
-        const merchantData = await Merchant.findByPk(merchant);
-        merchantName = merchantData ? `Commerçant : ${merchantData.name}` : '';
-    }
-    let reportTitle = 'Etat des ventes';
-    let additionalParts = [];
-    if (producerName) additionalParts.push(producerName);
-    if (articleName) additionalParts.push(articleName);
-    if (merchantName) additionalParts.push(merchantName);
-
-    if (period) {
-        reportTitle +=  '\n' + additionalParts.join(' | ') + '\n' + period;
-    } else if (additionalParts.length > 0) {
-        reportTitle +=  ':'+additionalParts.join(' | ');
-    }
-    worksheet.mergeCells('A1:L1');
-    worksheet.getCell('A1').value = reportTitle;
-    worksheet.getCell('A1').font = { size: 14, bold: true };
-    worksheet.getCell('A1').alignment = { horizontal: 'center' };
-    worksheet.getRow(1).height = 80;
-
-    worksheet.mergeCells('A2:L2');
-    worksheet.getCell('A2').value = generationDate;
-    worksheet.getCell('A2').alignment = { horizontal: 'right' };
-
-
-    const headers = [
-        'Date',
-        'Producteur' ,
-        'Article',
-        'Commerçant',
-        'Prix Unité',
-        'Quantité',
-        'Poids Net',
-        'Prix Total',
-        'Com. Prod',
-        'Com. Com',
-        'Total à Payer',
-        'Total Net',
-    ];
-    worksheet.addRow(headers);
-    worksheet.getRow(3).eachCell((cell) => {
-        cell.font = { bold: true };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'EEEEEE' } };
-    });
-
-    for (const sale of data) {
-        for (const transaction of sale.saleTransactions) {
-            const row = [
-                sale.date,
-                sale.producerName,
-                transaction.article?.name || 'Non spécifié',
-                transaction.merchant?.name || 'Non spécifié',
-                transaction.unitPrice,
-                transaction.boxes,
-                transaction.netWeight,
-                transaction.totalPrice,
-                sale.totalProducerCommission,
-                sale.totalMerchantCommission,
-                sale.totalToPay,
-                sale.total,
-            ];
-            worksheet.addRow(row);
-        }
-    }
-
-    // Ajuster la largeur des colonnes
-    worksheet.columns.forEach((column, index) => {
-        column.width = headers[index]?.length + 5 || 15;
-    });
-
-
-    worksheet.addRow([
-        'Total',
-        ...new Array(headers.length - 8).fill(''),
-        data.reduce((sum, sale) => sum + sale.saleTransactions.reduce((s, t) => s + t.boxes, 0), 0),
-        data.reduce((sum, sale) => sum + sale.saleTransactions.reduce((s, t) => s + t.netWeight, 0), 0),
-        data.reduce((sum, sale) => sum + sale.saleTransactions.reduce((s, t) => s + t.totalPrice, 0), 0),
-        data.reduce((sum, sale) => sum + sale.totalProducerCommission, 0),
-        data.reduce((sum, sale) => sum + sale.totalMerchantCommission, 0),
-        data.reduce((sum, sale) => sum + sale.totalToPay, 0),
-        data.reduce((sum, sale) => sum + sale.total, 0),
-    ]);
-
-
-   const fileName = "excelFile.xlsx";
-
-   const excelFile=tools.Excel_PATH;
-    if (!fs.existsSync(excelFile)) {
-        fs.mkdirSync(excelFile, { recursive: true });
-    }
-    const filePath = path.join(excelFile,fileName);
-
-       await workbook.xlsx.writeFile(filePath);
-        res.status(201).json(new Response(fileName));
-} catch (error) {
-    console.error("Erreur lors de la génération du fichier Excel :", error);
-    res.status(500).json({ success: false, message: error.message });
-}
-
-};
-*/
 
 module.exports = router;

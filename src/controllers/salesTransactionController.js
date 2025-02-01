@@ -264,15 +264,19 @@ router.checkPaymentInfo = async function (salesTransaction) {
     return salesTransaction;
 }
 /**************************************/
+router.get('/test-session', (req, res) => {
+    console.log("Vérification session :", req.session);
+    res.json({ session: req.session });
+});
 router.post('/generateSalesTransactionReport',async (req, res) => {
     // const {startDate, endDate, merchant, article} = req.body;
-    //console.log("valeur de request:",req.session.username);
     try {
         const dataToReport = await router.getSalesTransactionReportData(req.body);
+        const username = req.session.username;
         if (req.body.excelType) {
-            await router.generateExcelSalesTransactionReport(dataToReport, req.body, res);
+            await router.generateExcelSalesTransactionReport(dataToReport, req.body, res,username);
         } else if (req.body.pdfType) {
-            await router.generatePDFSalesTransactionReport(dataToReport, req.body, res);
+            await router.generatePDFSalesTransactionReport(dataToReport, req.body, res,username);
         } else {
             // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
             res.status(200).json({
@@ -328,7 +332,7 @@ router.getSalesTransactionReportData = async function (options) {
     return transasctions;
 
 }
-router.generateReportTitle = async function (filter) {
+router.generateReportTitle = async function (filter,username ) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
     let title = 'Liste Des Achats Des Commerçants';
     let reportTitle = [];
@@ -374,15 +378,15 @@ router.generateReportTitle = async function (filter) {
     reportTitle.push(title);
     if (articleName) reportTitle.push(articleName);
 
-    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\n  par :`;
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\nPar : ${username || "Utilisateur inconnu"}`;
 
     return {
         title, reportTitle: reportTitle.join('\n'), period, generationDate,
     };
 }
 
-router.generatePDFSalesTransactionReport = async function (data, filter, res) {
-    const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter);
+router.generatePDFSalesTransactionReport = async function (data, filter, res,username) {
+    const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter,username);
     let titleRow = [];
     titleRow.push([
         {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
@@ -421,9 +425,9 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
                     const articleGroup = groupedByArticle[article];
                     let isFirstRow = true;
                     const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
-                        const totalRowHeight = rowSpan * fontSize * lineHeight; // Hauteur totale pour les lignes fusionnées
-                        const cellHeight = fontSize; // Hauteur du texte dans la cellule
-                        const verticalMargin = (totalRowHeight - cellHeight) / 2; // Centrage vertical
+                        const totalRowHeight = rowSpan * fontSize * lineHeight;
+                        const cellHeight = fontSize;
+                        const verticalMargin = (totalRowHeight - cellHeight) / 2;
                         return [0, verticalMargin, 0, verticalMargin];
                     };
                     articleGroup.forEach((transaction, index) => {
@@ -475,8 +479,9 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
         content: [
             {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
-            {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]},
-    //${username}
+            { text: generationDate, fontSize: 10, alignment: 'right' },
+           ' \n',
+
             {
             columns: [{
 
@@ -531,36 +536,35 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res) {
     }
 }
 
-router.generateExcelSalesTransactionReport = async function (data, filter, res) {
+router.generateExcelSalesTransactionReport = async function (data, filter, res,username) {
     try {
-        const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter);
+        const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter,username);
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
+        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , (!filter.article ?'Article' :''  ),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
 
-        ws.cell(1, 1, 1, 8, true)
+        ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
             .style({
                 font: {name: 'Arial', italic: true, size: 10},
                 alignment: {horizontal: 'right', vertical: 'center'}
             });
-        ws.cell(2, 1, 2, 8, true)
+        ws.cell(2, 1, 2, titleRow.length, true)
             .string(reportTitle)
             .style({
                 font: {size: 12, bold: true,underline:true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
-        ws.cell(3, 1, 3, 8, true)
+        ws.cell(3, 1, 3, titleRow.length, true)
             .string(period)
             .style({
                 font: {size: 12, italic: true},
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
             });
-
-        ws.row(2).setHeight(60);
+        ws.row(1).setHeight(30);
+        ws.row(2).setHeight(70);
         ws.cell(4, 1).string('');
-
-        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , (!filter.article ?'Article' :''  ),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
 
         const headerStyle = wb.createStyle({
             font: { bold: true, size: 10 },
@@ -568,9 +572,11 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
             fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
             border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
+        const tableWidth = 100;
+        const columnCount = titleRow.length;
+        const columnWidth = Math.floor(tableWidth / columnCount);
         titleRow.forEach((title, index) => {
             ws.cell(5, index + 1).string(title).style(headerStyle);
-            const columnWidth = title.length + 5;
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
@@ -629,6 +635,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
                                 ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
                                     .string(transaction.date || "Non spécifié")
                                     .style(rowStyle);
+                                ws.column(1).setWidth(8);
                                 isFirstDateRow = false;
                             }
                             if (isFirstProducerRow) {
@@ -648,6 +655,8 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
                                ws.cell(rowIndex, 4,rowIndex + articleGroup.length - 1, 4, true)
                                         .string(transaction.article?.name.toUpperCase() || "Non spécifié")
                                         .style(rowStyle);
+
+
                                 }else {
                                      ws.cell(rowIndex, 3, rowIndex + articleGroup.length - 1, 3, true)
                                          .string(transaction.article?.name.toUpperCase() || "Non spécifié")
@@ -658,8 +667,11 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res) 
                                   if (!filter.merchant) colIndex += 1;
                                   if (!filter.article) colIndex += 1;
                                 ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle);
+                                ws.column(colIndex).setWidth(7);
                                 ws.cell(rowIndex, colIndex + 1).number(transaction.netWeight || 0).style(rowStyle);
+                                ws.column(colIndex+ 1).setWidth(7);
                                 ws.cell(rowIndex, colIndex + 2).string(transaction.unitPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                                ws.column(colIndex+ 2).setWidth(9);
                                 ws.cell(rowIndex, colIndex + 3).string(transaction.totalPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
                                 rowIndex++;
 

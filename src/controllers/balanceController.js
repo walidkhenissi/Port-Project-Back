@@ -314,16 +314,16 @@ router.updateBeneficiaryCommissionsBalance = async function (date) {
 
 router.post('/generateReportSoldeProducteur',async (req, res) => {
 
-    console.log("Nom de la session:", req.sessionStore);
     try
     {
         const dataToReport = await router.getSoldeProducteurReportData(req.body);
+        const username = req.session.username;
         const { creditType, debitType } = req.body;
         if (creditType || debitType) {
             if (req.body.pdfType) {
-                router.generatePDFSoldeProducteurReport(dataToReport, req.body, res);
+                router.generatePDFSoldeProducteurReport(dataToReport, req.body, res,username);
             } else if (req.body.excelType) {
-                router.generateExcelSoldeProducteurReport(dataToReport, req.body, res);
+                router.generateExcelSoldeProducteurReport(dataToReport, req.body, res,username);
             } else {
                 // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
                 res.status(200).json({
@@ -375,7 +375,7 @@ router.getSoldeProducteurReportData = async function (options) {
     let balances= await dao.find(criteria);
     return balances;
 }
-router.generateReportProducteurTitle = async function (filter) {
+router.generateReportProducteurTitle = async function (filter,username) {
     const {producer, solde1, solde2, soldeRule,creditType, debitType} = filter;
     let title='';
     let solde = '';
@@ -421,15 +421,15 @@ router.generateReportProducteurTitle = async function (filter) {
             solde = '';
     }
 
-    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \n par :`;
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \nPar : ${username || "Utilisateur inconnu"}`;
 
     return {
         titles, solde , title,generationDate
     };
 }
 
-router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
-    const { titles, solde,title, generationDate} = await router.generateReportProducteurTitle (filter);
+router.generatePDFSoldeProducteurReport = async function (data, filter, res,username) {
+    const { titles, solde,title, generationDate} = await router.generateReportProducteurTitle (filter,username);
    // const { creditType, debitType } = filter;
     let titleRowC = [];
     let titleRowD = [];
@@ -579,9 +579,9 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res) {
         res.status(404).json(new Response(err, true));
     }
 }
-router.generateExcelSoldeProducteurReport = async function (data, filter, res) {
+router.generateExcelSoldeProducteurReport = async function (data, filter, res,username) {
     try {
-        const { titles, solde,title, generationDate } = await router.generateReportProducteurTitle(filter);
+        const { titles, solde,title, generationDate } = await router.generateReportProducteurTitle(filter,username);
        const { creditType, debitType } = filter;
 
         const  wb = new xl.Workbook();
@@ -719,12 +719,13 @@ router.post('/generateReportSoldeCommercant', async (req, res) => {
     try
     {
         const dataToReport = await router.getSoldeCommercantReportData(req.body);
+        const username = req.session.username;
         const { creditType, debitType } = req.body;
         if (creditType || debitType) {
             if (req.body.pdfType) {
-            router.generatePDFSoldeCommercantReport(dataToReport,req.body, res);
+            router.generatePDFSoldeCommercantReport(dataToReport,req.body, res,username);
         } else if (req.body.excelType) {
-                router.generateExcelSoldeCommercantReport(dataToReport,req.body, res);
+                router.generateExcelSoldeCommercantReport(dataToReport,req.body, res,username);
             }
         }
             else{
@@ -779,7 +780,7 @@ router.getSoldeCommercantReportData = async function (options) {
 }
 
 
-router.generateReportCommercantTitle = async function (filter) {
+router.generateReportCommercantTitle = async function (filter,username) {
     const {merchant, solde1, solde2, soldeRule,creditType, debitType} = filter;
     let title = '';
     let solde = '';
@@ -828,15 +829,15 @@ router.generateReportCommercantTitle = async function (filter) {
     }
 
 
-    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \n par : `;
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \nPar : ${username || "Utilisateur inconnu"} `;
 
     return {
         titles, solde, title, generationDate,
     };
 }
 
-router.generatePDFSoldeCommercantReport = async function (data, filter, res) {
-    const {titles, solde,title, generationDate} = await router.generateReportCommercantTitle(filter);
+router.generatePDFSoldeCommercantReport = async function (data, filter, res,username) {
+    const {titles, solde,title, generationDate} = await router.generateReportCommercantTitle(filter,username);
     const { creditType, debitType } = filter;
     let titleRowC = [];
     let titleRowD = [];
@@ -987,9 +988,9 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res) {
     }
 }
 
-router.generateExcelSoldeCommercantReport = async function (data, filter, res) {
+router.generateExcelSoldeCommercantReport = async function (data, filter, res,username) {
     try {
-        const { titles, solde, generationDate } = await router.generateReportCommercantTitle(filter);
+        const { titles, solde, generationDate } = await router.generateReportCommercantTitle(filter,username);
         const { creditType, debitType } = filter;
 
         const  wb = new xl.Workbook();
