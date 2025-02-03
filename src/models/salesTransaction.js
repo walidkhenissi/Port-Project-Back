@@ -34,6 +34,10 @@ module.exports = (sequelize) => {
             references: Article,
             referencesKey: 'id'
         },
+        receiptNumber: {
+            type: DataTypes.INTEGER,
+            allowNull: false
+        },
         boxes: {
             type: DataTypes.INTEGER,
             allowNull: true,
@@ -74,7 +78,7 @@ module.exports = (sequelize) => {
             allowNull: false,
             default: 0
         },
-        receiptNumber: {
+        quittance: {
             type: DataTypes.STRING
         },
         transactionNumber: {

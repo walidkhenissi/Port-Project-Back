@@ -38,7 +38,6 @@ router.post('/findProducer', async (req, res) => {
     let criteria = req.body;
     try {
         const clonedCriteria = JSON.parse(JSON.stringify(criteria));
-        // console.log("=====================>clonedCriteria : " + JSON.stringify(clonedCriteria));
         const data1 = await dao.find(criteria);
         for (const key in data1) {
             let shipOwner = JSON.parse(JSON.stringify(data1[key]));

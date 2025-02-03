@@ -24,6 +24,10 @@ module.exports = (sequelize) => {
             type: DataTypes.STRING,
             allowNull: false
         },
+        receiptNumber: {
+            type: DataTypes.INTEGER,
+            allowNull: false
+        },
         //boat name + boat number
         boatReference: {
             type: DataTypes.STRING,
