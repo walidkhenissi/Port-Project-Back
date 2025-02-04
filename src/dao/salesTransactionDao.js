@@ -47,7 +47,7 @@ module.exports = {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
             const salesTransactions = await SalesTransaction.findAll({
                 where: criteria.where,
-                include: [{model: Article, as: 'article'}, {model: Merchant, as: 'merchant'}, {model: Sale, as: 'sale'}],
+                include: [{model: Article, as: 'article'}, {model: Merchant, as: 'merchant'}, {model: Sale, as: 'sale'}, {model: PaymentInfo, as: 'paymentInfo'}],
                 limit: criteria.limit,
                 offset: criteria.skip,
                 order: criteria.sort
