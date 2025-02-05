@@ -4,6 +4,7 @@ const saleDao = require("../dao/saleDao");
 const commissionBeneficiaryController = require("../controllers/commissionBeneficiaryController");
 const Response = require("../utils/response");
 const {SalesTransaction, sequelize, CommissionValue} = require("../models");
+const _ = require("lodash");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -172,10 +173,9 @@ router.post('/findWithDetails', async (req, res) => {
         if (commissionIds.length)
             criteria.where.commissionId = commissionIds;
         const whereCriteria = _.clone(criteria.where);
-        const whereCriteria1 = _.clone(criteria.where);
         const data = await dao.find(criteria);
         const count = await dao.count({where: whereCriteria});
-        const sum = await dao.sum({where: whereCriteria1});
+        const sum = await dao.sum({where: {id:_.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;

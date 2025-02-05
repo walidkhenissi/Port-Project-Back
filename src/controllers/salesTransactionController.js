@@ -14,6 +14,7 @@ const path = require("path");
 //const ExcelJS = require("exceljs");
 const {forEach} = require("lodash/core");
 const xl = require('excel4node');
+const _ = require("lodash");
 router.get('/list', async (req, res) => {
     let criteria = req.body;
     try {
@@ -32,7 +33,7 @@ router.post('/find', async (req, res) => {
         const whereCriteria1 = _.clone(criteria.where);
         const data = await salesTransactionDao.find(criteria);
         const count = await salesTransactionDao.count({where: whereCriteria});
-        const sum = await salesTransactionDao.sum({where: whereCriteria1});
+        const sum = await salesTransactionDao.sum({where: {id:_.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;

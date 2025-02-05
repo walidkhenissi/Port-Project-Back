@@ -79,10 +79,15 @@ module.exports = (sequelize) => {
             type: DataTypes.STRING,
             allowNull: true
         },
+        isStartBalance: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            default: false
+        },
         note: {
             type: DataTypes.TEXT,
             allowNull: true
-        },
+        }
     });
     return Payment;
 };

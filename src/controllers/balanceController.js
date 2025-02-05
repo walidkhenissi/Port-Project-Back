@@ -743,7 +743,7 @@ router.post('/generateReportSoldeCommercant', async (req, res) => {
 });
 
 router.getSoldeCommercantReportData = async function (options) {
-    let criteria = {where: {}};
+    let criteria = {where: {}, sort:{balance :'ASC'}};
     if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
         switch (options.soldeRule) {
             case 'equals' : {

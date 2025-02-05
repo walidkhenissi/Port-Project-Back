@@ -7,6 +7,7 @@ const balanceController = require("../controllers/balanceController");
 const cashTransactionController = require("../controllers/cashTransactionController");
 const Response = require("../utils/response");
 const {ConsumptionInfo, PaymentType, Merchant, CashAccount, Bank, Payment} = require("../models");
+const _ = require("lodash");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -23,10 +24,9 @@ router.post('/find', async (req, res) => {
     let criteria = req.body;
     try {
         const whereCriteria = _.clone(criteria.where);
-        const whereCriteria1 = _.clone(criteria.where);
         const data = await dao.find(criteria);
         const count = await dao.count({where: whereCriteria});
-        const sum = await dao.sum({where: whereCriteria1});
+        const sum = await dao.sum({where: {id:_.map(data, 'id')}});
         // console.log("=====================>sum : " + JSON.stringify(sum));
         const response = new Response();
         response.data = data;

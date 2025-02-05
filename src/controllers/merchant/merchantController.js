@@ -6,6 +6,7 @@ const Response = require("../../utils/response");
 const saleDao = require("../../dao/saleDao");
 const salesTransactionDao = require("../../dao/salesTransactionDao");
 const balanceDao = require("../../dao/balanceDao");
+const paymentDao = require("../../dao/paymentDao");
 
 router.post('/create', async (req, res) => {
     // console.log("=====================>balance : " + JSON.stringify("======================>create"));
@@ -105,6 +106,10 @@ router.delete('/remove', async (req, res) => {
         const salesTransactionsCount = await salesTransactionDao.count({where: {merchantId: id}});
         if (salesTransactionsCount && salesTransactionsCount > 0)
             return res.status(404).json(new Response({msg: "Impossible de supprimer le commerçant. Une ou plusieurs opération(s) de vente attachée(s)"}, true));
+        //Check payments
+        const paymentsCount = await paymentDao.count({where: {merchantId: id}});
+        if (paymentsCount && paymentsCount > 0)
+            return res.status(404).json(new Response({msg: "Impossible de supprimer le commerçant. Une ou plusieurs règlement(s) attachée(s)"}, true));
         //Check balance
         const balances = await balanceDao.list({where: {merchantId: id}});
         for (const balancesKey in balances) {
