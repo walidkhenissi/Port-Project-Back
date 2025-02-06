@@ -7,7 +7,7 @@ const boxesTransactionController = require("../controllers/boxesTransactionContr
 const saleController = require("../controllers/saleController");
 const commissionController = require("../controllers/commissionController");
 const Response = require("../utils/response");
-const {CommissionValue, Merchant, PaymentInfo, Article} = require("../models");
+const {CommissionValue, Merchant, PaymentInfo, Article, SalesTransactionPayment, PaymentType} = require("../models");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
@@ -15,6 +15,7 @@ const path = require("path");
 const {forEach} = require("lodash/core");
 const xl = require('excel4node');
 const _ = require("lodash");
+const {getSoldeInitial} = require("../dao/salesTransactionDao");
 router.get('/list', async (req, res) => {
     let criteria = req.body;
     try {
@@ -751,6 +752,7 @@ router.post('/generateAccountReport',async (req, res) => {
 router.getAccountReportData = async function (options) {
     let criteria = {where: {}};
 
+
     if (!tools.isFalsey(options.dateRule)) {
         switch (options.dateRule) {
             case 'equals' : {
@@ -775,17 +777,48 @@ router.getAccountReportData = async function (options) {
                 criteria.where.date = {'>=': options.startDate, '<=': options.endDate};
                 break;
             }
+            case 'debut':
             default:
                 break;
         }
     }
     if (!tools.isFalsey(options.merchant)) criteria.where.merchantId = options.merchant;
     if (!tools.isFalsey(options.saleId)) {criteria.where.saleId = options.saleId;}
-    let transasctions = await salesTransactionDao.findAll(criteria);
+    let transactions = await salesTransactionDao.findAll(criteria);
 
-    return transasctions;
+  // const soldeInitial = await salesTransactionDao.getSoldeInitial(criteria);
+
+    //  return { transactions, soldeInitial };
+    return transactions;
 
 }
+/*router.calculateSoldeInitial=async function(criteria) {
+    try {
+        // Ajouter la condition de date dans les critères pour filtrer les transactions avant la date
+        const dateCondition = criteria.where.date || {};
+        criteria.where.date = {
+            '<': dateCondition['>='] || dateCondition['>'] || dateCondition['>=' ] || dateCondition['<'] || dateCondition['<='] || 0, // Assurer de filtrer avant la date
+        };
+
+        // Calcul de la somme des achats avant la date
+        const totalAchats = await SalesTransaction.sum('totalToPayByMerchant', {
+            where: criteria.where
+        });
+
+        // Calcul de la somme des paiements avant la date
+        const totalReglements = await SalesTransaction.sum('totalMerchantPayment', {
+            where: criteria.where
+        });
+
+        // Calcul du solde initial (différence entre paiements et achats)
+        const soldeInitial = (totalReglements || 0) - (totalAchats || 0);
+
+        return soldeInitial;
+    } catch (error) {
+        console.error('Error calculating initial balance:', error);
+        return 0; // Retourner 0 si une erreur survient
+    }
+}*/
 router.generateReportTitleAccount = async function (filter,username ) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
     let title = 'États des comptes des commerçants';
@@ -837,8 +870,8 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         [
            { text: 'Achats',fontSize: 10, colSpan: 10- (filter.merchant ? 1 : 0) , alignment: 'center', bold: true, fillColor: '#E8EDF0' },
              {}, ...(filter.merchant ? [] : ['']), {}, {}, {}, {}, {}, {},{},
-            { text: 'Règlements',fontSize: 10, colSpan: 3, alignment: 'center', bold: true, fillColor: '#E8EDF0' },
-            {}, {}
+            { text: 'Règlements',fontSize: 10, colSpan: 4, alignment: 'center', bold: true, fillColor: '#E8EDF0' },
+            {},{},{}
         ],
         [
         {text: 'Date', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
@@ -853,10 +886,14 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         {text: 'Prix Total', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Montant', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Type', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'N°Pièce', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
+        {text: 'N°Pièce', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Solde', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0' }
 
-    ].filter(Boolean));
-    const filteredData = data.filter(transaction => {
+
+        ].filter(Boolean));
+
+
+    const filteredData = data.filter((transaction) => {
         if (!filter.merchant ) return true;
 
         return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant);
@@ -871,7 +908,14 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
     let totalToPayByMerchantSum =0;
     let totalmerchantCommissionSum  =0;
     let totalMerchantPaymentSum =0;
+    let totalRestMerchantPaymentSum =0;
 
+    let soldeInitial = 0;
+    if (filteredData) {
+        soldeInitial = await salesTransactionDao.getSoldeInitial(filter);
+        console.log("Solde initial calcule : ", soldeInitial);
+    }
+   // let soldeCourant = soldeInitial;
 
 
     Object.keys(groupedByDate).forEach(date => {
@@ -899,6 +943,7 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                         totalmerchantCommissionSum += transaction.merchantCommission;
                         totalToPayByMerchantSum += transaction.totalToPayByMerchant;
                         totalMerchantPaymentSum +=transaction.totalMerchantPayment;
+                        totalRestMerchantPaymentSum +=transaction.restMerchantPayment;
 
                         const row = [
                             isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 8, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
@@ -911,9 +956,25 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                             {text: transaction.totalPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
                             {text: transaction.merchantCommission.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
                             {text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.paymentInfo?.name || 'Non spécifié', fontSize: 8, alignment: 'center'},
-                            {text: transaction.receiptNumber, fontSize: 8, alignment: 'right', margin: [0, 3]}
+                            {text: transaction.salesTransactionPayments?.length
+                                       ? transaction.salesTransactionPayments.map(payment => payment.value?.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }) || "0.00").join('\n')
+                                       : "",
+                                   fontSize: 8,
+                                   alignment: 'right',
+                                   margin: [0, 3]
+                               },
+                            { text: transaction.salesTransactionPayments?.length
+                                       ? transaction.salesTransactionPayments.map(payment =>payment.paymentType?.name || 'Non spécifié').join('\n')
+                              : '',
+                                   fontSize: 8,
+                                   alignment: 'center',
+                                   margin: [0, 3]
+                            },
+                            { text: transaction.salesTransactionPayments?.length
+                                    ? transaction.salesTransactionPayments.map(payment =>payment.payment?.number || '').join('\n')
+                                    : '', fontSize: 8, alignment: 'center', margin: [0, 3]
+                            },
+                            {text: transaction.restMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]}
 
                         ].filter(Boolean);
 
@@ -939,8 +1000,10 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         {text: totalmerchantCommissionSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
         {text: totalToPayByMerchantSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
         {text: totalMerchantPaymentSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-         '',''
-    ]);
+         '','',
+       {text: totalRestMerchantPaymentSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]}
+
+   ]);
 
     let docDefinition = {
         pageSize: 'A4',
@@ -954,13 +1017,14 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
             { text: generationDate, fontSize: 10, alignment: 'right' },
             ' \n',
-
+            { text: `Solde avant le ${filter.startDate} = ${soldeInitial.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2})} DT`, fontSize: 10, alignment: 'left', bold: true, margin: [0, 10] },
+//
             {
                 columns: [{
 
                     table: {
                         body: [...titleRow, ...salesReportData],
-                        widths: ['auto', 95,!filter.merchant ? 82 : 0, 80 ,40, 40, 40,'auto','auto','auto','auto','auto','*'].filter(Boolean),
+                        widths: ['auto', 80,!filter.merchant ? 77 : 0, 73 ,35, 35, 40,'auto','auto','auto','auto','auto','auto','auto'].filter(Boolean),
                     },
                 },],
             },],

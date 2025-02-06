@@ -1,4 +1,4 @@
-const {sequelize, SalesTransaction, Article, Merchant, Sale, PaymentInfo} = require('../models');
+const {sequelize, SalesTransaction, Article, Merchant, Sale, PaymentInfo, SalesTransactionPayment, PaymentType, Payment} = require('../models');
 const {Op} = require("sequelize");
 
 module.exports = {
@@ -47,7 +47,18 @@ module.exports = {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
             const salesTransactions = await SalesTransaction.findAll({
                 where: criteria.where,
-                include: [{model: Article, as: 'article'}, {model: Merchant, as: 'merchant'}, {model: Sale, as: 'sale'}, {model: PaymentInfo, as: 'paymentInfo'}],
+                include: [{model: Article, as: 'article'}, {model: Merchant, as: 'merchant'}, {model: Sale, as: 'sale'}, {model: SalesTransactionPayment, as: 'salesTransactionPayments',include: [
+                        {
+                            model: PaymentType,
+                            as: 'paymentType',
+                            attributes: ['name']
+                        },
+                        {
+                            model:Payment,
+                            as:'payment',
+                            attributes: ['number']
+                        }
+                    ]}],
                 limit: criteria.limit,
                 offset: criteria.skip,
                 order: criteria.sort
@@ -68,6 +79,31 @@ module.exports = {
             return error;
         }
     },
+    getSoldeInitial:async function (criteria) {
+        try {
+            if (!criteria.where) {
+                criteria.where = {};  }
+            const dateCondition = criteria.where.date || {};
+            const startDate = criteria.where.startDate;
+
+            if (startDate) {
+                criteria.where.date = {'<=': startDate};
+            }else {
+                console.log("Aucune date initiale spécifiée, solde initial = 0");
+                return 0;
+            }
+            const totalAchats = await SalesTransaction.sum('totalToPayByMerchant', {where: criteria.where});
+           const totalReglements = await SalesTransaction.sum('totalMerchantPayment',{where: criteria.where});
+            const soldeInitial =    (totalAchats || 0) - (totalReglements || 0) ;
+
+           return soldeInitial;
+
+        } catch (error) {
+            console.error('Error sum salesTransactions :', error);
+            return error;
+        }
+    },
+
     get: async function (id) {
         try {
             const salesTransaction = await SalesTransaction.findByPk(id, {
