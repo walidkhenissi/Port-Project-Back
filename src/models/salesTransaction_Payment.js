@@ -10,7 +10,7 @@ module.exports = (sequelize) => {
             autoIncrement: true
         },
         date: {
-            type: DataTypes.DATEONLY,
+            type: DataTypes.DATE,
             allowNull: false
         },
         value: {

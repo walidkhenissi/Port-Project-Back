@@ -142,7 +142,7 @@ router.put('/update', async (req, res) => {
                 if (!cashTransactionAccount)
                     return res.status(404).json(new Response({error: 'Internal Server Error'}, true));
                 const createdCashTransaction = await cashTransactionDao.create({
-                    date: updated.date,
+                    date: tools.refactorDate(updated.date),
                     name: cashTransactionName,
                     credit: updated.isCommissionnaryPayment ? 0 : updated.value,
                     debit: updated.isCommissionnaryPayment ? updated.value : 0,

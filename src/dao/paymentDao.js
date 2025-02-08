@@ -46,7 +46,7 @@ module.exports = {
     sum: async function (criteria) {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
-            const sum = await Payment.sum('value',{where: criteria.where});
+            const sum = await Payment.sum('value', {where: criteria.where});
             return sum;
         } catch (error) {
             console.error('Error sum payments :', error);
@@ -70,6 +70,7 @@ module.exports = {
             // Start a transaction
             const transaction = await sequelize.transaction();
             try {
+                payment.isStartBalance = false;
                 // Create a payment
                 const createdPayment = await Payment.create(payment, {transaction});
                 // Commit the transaction

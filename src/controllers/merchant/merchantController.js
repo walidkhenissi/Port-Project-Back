@@ -15,7 +15,7 @@ router.post('/create', async (req, res) => {
         // Start a transaction
         const transaction = await sequelize.transaction();
         merchant.civilityId = merchant.civility ? merchant.civility.id : undefined;
-        merchant.name = merchant.firstName + ' ' + merchant.lastName;
+        merchant.name = merchant.lastName + ' ' + merchant.firstName;
         try {
             if (merchant.address && (merchant.address.street || merchant.address.city || merchant.address.postalCode)) {
                 // Create an address
@@ -146,7 +146,7 @@ router.put('/update', async (req, res) => {
         // Update merchant properties based on request body
         merchant.firstName = toUpdateObject.firstName || merchant.firstName;
         merchant.lastName = toUpdateObject.lastName || merchant.lastName;
-        merchant.name = merchant.firstName + ' ' + merchant.lastName;
+        merchant.name = merchant.lastName + ' ' + merchant.firstName;
         merchant.civilityId = toUpdateObject.civility.id || merchant.civility.id;
         merchant.socialReason = toUpdateObject.socialReason || merchant.socialReason;
         merchant.taxRegistrationNumber = toUpdateObject.taxRegistrationNumber || merchant.taxRegistrationNumber;

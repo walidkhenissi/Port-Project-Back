@@ -1,6 +1,6 @@
 var router = require('express').Router();
 const dao = require("../dao/balanceDao");
-const { Op } = require('sequelize');
+const {Op} = require('sequelize');
 const beneficiaryDao = require("../dao/beneficiaryDao");
 const saleDao = require("../dao/saleDao");
 const salePaymentDao = require("../dao/salePaymentDao");
@@ -312,18 +312,17 @@ router.updateBeneficiaryCommissionsBalance = async function (date) {
 }
 /**********SoldeArmateur************/
 
-router.post('/generateReportSoldeProducteur',async (req, res) => {
+router.post('/generateReportSoldeProducteur', async (req, res) => {
 
-    try
-    {
+    try {
         const dataToReport = await router.getSoldeProducteurReportData(req.body);
         const username = req.session.username;
-        const { creditType, debitType } = req.body;
+        const {creditType, debitType} = req.body;
         if (creditType || debitType) {
             if (req.body.pdfType) {
-                router.generatePDFSoldeProducteurReport(dataToReport, req.body, res,username);
+                router.generatePDFSoldeProducteurReport(dataToReport, req.body, res, username);
             } else if (req.body.excelType) {
-                router.generateExcelSoldeProducteurReport(dataToReport, req.body, res,username);
+                router.generateExcelSoldeProducteurReport(dataToReport, req.body, res, username);
             } else {
                 // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
                 res.status(200).json({
@@ -332,10 +331,10 @@ router.post('/generateReportSoldeProducteur',async (req, res) => {
                 });
             }
         }
-    }catch (error){
+    } catch (error) {
         console.error('Error generating solde Producteur report:', error);
 
-        res.status(500).json({ error: 'Error generating report' });
+        res.status(500).json({error: 'Error generating report'});
     }
 });
 
@@ -344,7 +343,7 @@ router.getSoldeProducteurReportData = async function (options) {
     if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
         switch (options.soldeRule) {
             case 'equals' : {
-                criteria.where.balance= options.solde1;
+                criteria.where.balance = options.solde1;
                 break;
             }
             case 'notEquals' : {
@@ -352,11 +351,11 @@ router.getSoldeProducteurReportData = async function (options) {
                 break;
             }
             case 'lowerThan' : {
-                criteria.where.balance = {'<=':options.solde1};
+                criteria.where.balance = {'<=': options.solde1};
                 break;
             }
             case 'greaterThan' : {
-                criteria.where.balance = {'>=':options.solde1};
+                criteria.where.balance = {'>=': options.solde1};
                 break;
             }
             case 'between' : {
@@ -371,19 +370,21 @@ router.getSoldeProducteurReportData = async function (options) {
     }
     if (!tools.isFalsey(options.producer))
         criteria.where.shipOwnerId = options.producer;
-
-    let balances= await dao.find(criteria);
+    let balances = await dao.find(criteria);
+    balances = _.sortBy(balances, function (item) {
+        return item.shipOwner ? item.shipOwner.name : '';
+    }, 'asc');
     return balances;
 }
-router.generateReportProducteurTitle = async function (filter,username) {
-    const {producer, solde1, solde2, soldeRule,creditType, debitType} = filter;
-    let title='';
+router.generateReportProducteurTitle = async function (filter, username) {
+    const {producer, solde1, solde2, soldeRule, creditType, debitType} = filter;
+    let title = '';
     let solde = '';
     let producerName = '';
     if (producer) {
         const producerData = await Shipowner.findByPk(producer);
-        if(producerData){
-           title = ` Armateur : ${producerData.name.toUpperCase()}`;
+        if (producerData) {
+            title = ` Armateur : ${producerData.name.toUpperCase()}`;
             producerName = producerData.name.toUpperCase();
         }
     }
@@ -424,13 +425,13 @@ router.generateReportProducteurTitle = async function (filter,username) {
     const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')} \nPar : ${username || ""}`;
 
     return {
-        titles, solde , title,generationDate
+        titles, solde, title, generationDate
     };
 }
 
-router.generatePDFSoldeProducteurReport = async function (data, filter, res,username) {
-    const { titles, solde,title, generationDate} = await router.generateReportProducteurTitle (filter,username);
-   // const { creditType, debitType } = filter;
+router.generatePDFSoldeProducteurReport = async function (data, filter, res, username) {
+    const {titles, solde, title, generationDate} = await router.generateReportProducteurTitle(filter, username);
+    // const { creditType, debitType } = filter;
     let titleRowC = [];
     let titleRowD = [];
     titleRowC.push([
@@ -443,8 +444,8 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
     );
     let creditReportData = [];
     let debitReportData = [];
-    let totalCreditSolde =0;
-    let totalDebitSolde =0;
+    let totalCreditSolde = 0;
+    let totalDebitSolde = 0;
     for (const balance of data) {
         if (balance.shipOwner && balance.shipOwner.name) {
             if (balance.balance > 0) {
@@ -456,10 +457,12 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
                         alignment: 'center',
                         margin: [0, 3]
                     },
-                    {text: balance.balance.toLocaleString('fr-TN', {
+                    {
+                        text: balance.balance.toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2
-                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]}
+                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]
+                    }
                 ]);
             }
             if (balance.balance < 0) {
@@ -471,10 +474,12 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
                         alignment: 'center',
                         margin: [0, 3]
                     },
-                    {text: balance.balance.toLocaleString('fr-TN', {
+                    {
+                        text: balance.balance.toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2
-                        }), fontSize: 9, alignment: 'right', margin:[0, 3, 10, 3]}
+                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 10, 3]
+                    }
                 ]);
             }
         }
@@ -482,16 +487,44 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
 
     debitReportData.push([
         {text: 'Total', fontSize: 10, alignment: 'center', bold: true, margin: [0, 3]},
-        {text: totalDebitSolde.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]}
+        {
+            text: totalDebitSolde.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3, 3, 3]
+        }
     ]);
     creditReportData.push([
         {text: 'Total', fontSize: 10, alignment: 'center', bold: true, margin: [0, 3]},
-        { text: totalCreditSolde.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]}
+        {
+            text: totalCreditSolde.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3, 3, 3]
+        }
     ]);
     let pdfContent = [
-        { text: title, fontSize: 14, alignment: 'center', decoration: 'underline', font: 'Roboto', bold: true, margin: [0, 10] },
-        { text: solde, fontSize: 14, alignment: 'center', margin: [0, 6] },
-        { text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10] }
+        {
+            text: title,
+            fontSize: 14,
+            alignment: 'center',
+            decoration: 'underline',
+            font: 'Roboto',
+            bold: true,
+            margin: [0, 10]
+        },
+        {text: solde, fontSize: 14, alignment: 'center', margin: [0, 6]},
+        {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]}
     ];
 
     if (filter.creditType && titles.credit) {
@@ -513,8 +546,8 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
         if (filter.creditType) {
             pdfContent.push({text: '', pageBreak: 'after'});
         }
-         pdfContent.push(
-            {text:titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+        pdfContent.push(
+            {text: titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -579,44 +612,53 @@ router.generatePDFSoldeProducteurReport = async function (data, filter, res,user
         res.status(404).json(new Response(err, true));
     }
 }
-router.generateExcelSoldeProducteurReport = async function (data, filter, res,username) {
+router.generateExcelSoldeProducteurReport = async function (data, filter, res, username) {
     try {
-        const { titles, solde,title, generationDate } = await router.generateReportProducteurTitle(filter,username);
-       const { creditType, debitType } = filter;
+        const {titles, solde, title, generationDate} = await router.generateReportProducteurTitle(filter, username);
+        const {creditType, debitType} = filter;
 
-        const  wb = new xl.Workbook();
+        const wb = new xl.Workbook();
         const headerStyle = wb.createStyle({
-            font: { bold: true, size: 10 },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
-            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
         const rowStyle = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'center', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
         const rowStyleRight = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'right', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
-        const addSheet = (sheetName, titleRow, reportData, totalSolde,titles) =>{
-            const  ws = wb.addWorksheet(sheetName);
+        const addSheet = (sheetName, titleRow, reportData, totalSolde, titles) => {
+            const ws = wb.addWorksheet(sheetName);
 
-        ws.cell(1, 1, 1, 2, true).string(generationDate).style({font: {name: 'Arial', italic: true, size: 10}, alignment: {horizontal: 'right', vertical: 'center'}});
-        ws.cell(2, 1, 2, 2, true).string(titles).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
-        ws.cell(3, 1, 3, 2, true).string(solde).style({font: {size: 12, italic: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}});
+            ws.cell(1, 1, 1, 2, true).string(generationDate).style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+            ws.cell(2, 1, 2, 2, true).string(titles).style({
+                font: {size: 12, bold: true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+            ws.cell(3, 1, 3, 2, true).string(solde).style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
 
             titleRow.forEach((header, index) => {
                 ws.cell(5, index + 1).string(header.text).style(headerStyle);
@@ -624,73 +666,85 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res,us
                 ws.column(index + 1).setWidth(columnWidth);
             });
 
-        ws.row(2).setHeight(40);
-        ws.cell(4, 1).string('');
+            ws.row(2).setHeight(40);
+            ws.cell(4, 1).string('');
 
-        reportData.forEach((row, rowIndex) => {
-            row.forEach((cell, colIndex) => {
-                if (typeof cell === 'string') {
-                    ws.cell(rowIndex + 6, colIndex + 1).string(cell).style(rowStyle);
-                } else {
-                    ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00" });
-                }
+            reportData.forEach((row, rowIndex) => {
+                row.forEach((cell, colIndex) => {
+                    if (typeof cell === 'string') {
+                        ws.cell(rowIndex + 6, colIndex + 1).string(cell).style(rowStyle);
+                    } else {
+                        ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00"});
+                    }
+                });
             });
-        });
 
             ws.cell(reportData.length + 6, 1).string('Total').style(
-                { font: {size: 10, bold: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}, border: {
-                        left: { style: 'thin', color: '#000000' },
-                        right: { style: 'thin', color: '#000000' },
-                        top: { style: 'thin', color: '#000000' },
-                        bottom: { style: 'thin', color: '#000000' }
-                    }});
-            ws.cell(reportData.length + 6, 2).string(totalSolde.toLocaleString("fr-TN", { style: "currency", currency: "TND", minimumFractionDigits: 2 })).style(
-                { font: {size: 10, bold: true}, alignment: {horizontal: 'right', vertical: 'center', wrapText: true},    border: {
-                        left: { style: 'thin', color: '#000000' },
-                        right: { style: 'thin', color: '#000000' },
-                        top: { style: 'thin', color: '#000000' },
-                        bottom: { style: 'thin', color: '#000000' }
-                    }});
+                {
+                    font: {size: 10, bold: true},
+                    alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+                    border: {
+                        left: {style: 'thin', color: '#000000'},
+                        right: {style: 'thin', color: '#000000'},
+                        top: {style: 'thin', color: '#000000'},
+                        bottom: {style: 'thin', color: '#000000'}
+                    }
+                });
+            ws.cell(reportData.length + 6, 2).string(totalSolde.toLocaleString("fr-TN", {
+                style: "currency",
+                currency: "TND",
+                minimumFractionDigits: 2
+            })).style(
+                {
+                    font: {size: 10, bold: true},
+                    alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
+                    border: {
+                        left: {style: 'thin', color: '#000000'},
+                        right: {style: 'thin', color: '#000000'},
+                        top: {style: 'thin', color: '#000000'},
+                        bottom: {style: 'thin', color: '#000000'}
+                    }
+                });
 
 
-        ws.column(1).setWidth(40);
-        ws.column(2).setWidth(40);
-    };
+            ws.column(1).setWidth(40);
+            ws.column(2).setWidth(40);
+        };
 
-    let creditReportData = [];
-    let debitReportData = [];
-    let totalCreditSolde = 0;
-    let totalDebitSolde = 0;
+        let creditReportData = [];
+        let debitReportData = [];
+        let totalCreditSolde = 0;
+        let totalDebitSolde = 0;
 
-    for (const balance of data) {
-        if (balance.shipOwner && balance.shipOwner.name) {
-            const name = balance.shipOwner.name.toUpperCase();
-            const balanceValue = balance.balance;
-            if (balanceValue > 0) {
-                totalCreditSolde += balanceValue;
-                creditReportData.push([name, balanceValue]);
-            } else if (balanceValue < 0) {
-                totalDebitSolde += Math.abs(balanceValue);
-                debitReportData.push([name, Math.abs(balanceValue)]);
+        for (const balance of data) {
+            if (balance.shipOwner && balance.shipOwner.name) {
+                const name = balance.shipOwner.name.toUpperCase();
+                const balanceValue = balance.balance;
+                if (balanceValue > 0) {
+                    totalCreditSolde += balanceValue;
+                    creditReportData.push([name, balanceValue]);
+                } else if (balanceValue < 0) {
+                    totalDebitSolde += Math.abs(balanceValue);
+                    debitReportData.push([name, Math.abs(balanceValue)]);
+                }
             }
         }
-    }
 
-    if (creditType) {
-        const titleRowC = [
-            { text: 'Client', alignment: 'center' },
-            { text: 'Solde', alignment: 'center' },
-        ];
-        addSheet('Armateurs Créditeurs', titleRowC, creditReportData, totalCreditSolde,titles.credit);
-    }
+        if (creditType) {
+            const titleRowC = [
+                {text: 'Client', alignment: 'center'},
+                {text: 'Solde', alignment: 'center'},
+            ];
+            addSheet('Armateurs Créditeurs', titleRowC, creditReportData, totalCreditSolde, titles.credit);
+        }
 
-    if (debitType) {
-        const titleRowD = [
-            { text: 'Client', alignment: 'center' },
-            { text: 'Solde', alignment: 'center' },
-        ];
-        addSheet('Armateurs Débiteurs', titleRowD, debitReportData, totalDebitSolde,titles.debit);
-    }
+        if (debitType) {
+            const titleRowD = [
+                {text: 'Client', alignment: 'center'},
+                {text: 'Solde', alignment: 'center'},
+            ];
+            addSheet('Armateurs Débiteurs', titleRowD, debitReportData, totalDebitSolde, titles.debit);
+        }
         const fileName = "SoldeArmateur.xlsx";
         const excelFile = tools.Excel_PATH;
         if (!fs.existsSync(excelFile)) {
@@ -699,7 +753,7 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res,us
         const filePath = path.join(excelFile, fileName);
 
         //await workbook.xlsx.writeFile(filePath);
-        wb.write(filePath,function (err, stats){
+        wb.write(filePath, function (err, stats) {
             if (err) {
                 console.error("Error generating Excel file:", err);
                 return res.status(500).send('Error generating Excel file');
@@ -709,58 +763,56 @@ router.generateExcelSoldeProducteurReport = async function (data, filter, res,us
         });
     } catch (err) {
         console.error("Erreur lors de la génération du fichier Excel:", err);
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({success: false, message: err.message});
     }
 
 };
 /**********SoldeCommercant************/
 router.post('/generateReportSoldeCommercant', async (req, res) => {
 
-    try
-    {
+    try {
         const dataToReport = await router.getSoldeCommercantReportData(req.body);
         const username = req.session.username;
-        const { creditType, debitType } = req.body;
+        const {creditType, debitType} = req.body;
         if (creditType || debitType) {
             if (req.body.pdfType) {
-            router.generatePDFSoldeCommercantReport(dataToReport,req.body, res,username);
-        } else if (req.body.excelType) {
-                router.generateExcelSoldeCommercantReport(dataToReport,req.body, res,username);
+                router.generatePDFSoldeCommercantReport(dataToReport, req.body, res, username);
+            } else if (req.body.excelType) {
+                router.generateExcelSoldeCommercantReport(dataToReport, req.body, res, username);
             }
-        }
-            else{
+        } else {
             // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
             res.status(200).json({
                 message: 'Report data fetched successfully',
                 data: dataToReport
             });
         }
-    }catch (error){
+    } catch (error) {
         console.error('Error generating solde report:', error);
 
-        res.status(500).json({ error: 'Error generating report' });
+        res.status(500).json({error: 'Error generating report'});
     }
 });
 
 router.getSoldeCommercantReportData = async function (options) {
-    let criteria = {where: {}, sort:{balance :'ASC'}};
+    let criteria = {where: {}, sort: {balance: 'ASC'}};
     if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
         switch (options.soldeRule) {
             case 'equals' : {
-                    criteria.where.balance= options.solde1;
-            break;
+                criteria.where.balance = options.solde1;
+                break;
             }
             case 'notEquals' : {
                 criteria.where.balance = {'!': options.solde1};
-             break;
+                break;
             }
             case 'lowerThan' : {
-                criteria.where.balance = {'<=':options.solde1};
+                criteria.where.balance = {'<=': options.solde1};
                 break;
             }
             case 'greaterThan' : {
-                criteria.where.balance = {'>=':options.solde1};
-             break;
+                criteria.where.balance = {'>=': options.solde1};
+                break;
             }
             case 'between' : {
                 if (!tools.isFalsey(options.solde2)) {
@@ -772,16 +824,19 @@ router.getSoldeCommercantReportData = async function (options) {
                 break;
         }
     }
-     if (!tools.isFalsey(options.merchant))
-            criteria.where.merchantId = options.merchant;
+    if (!tools.isFalsey(options.merchant))
+        criteria.where.merchantId = options.merchant;
 
-        let balances= await dao.find(criteria);
+    let balances = await dao.find(criteria);
+    balances = _.sortBy(balances, function (item) {
+        return item.merchant ? item.merchant.name : '';
+    }, 'asc');
     return balances;
 }
 
 
-router.generateReportCommercantTitle = async function (filter,username) {
-    const {merchant, solde1, solde2, soldeRule,creditType, debitType} = filter;
+router.generateReportCommercantTitle = async function (filter, username) {
+    const {merchant, solde1, solde2, soldeRule, creditType, debitType} = filter;
     let title = '';
     let solde = '';
     let merchantName = '';
@@ -836,15 +891,15 @@ router.generateReportCommercantTitle = async function (filter,username) {
     };
 }
 
-router.generatePDFSoldeCommercantReport = async function (data, filter, res,username) {
-    const {titles, solde,title, generationDate} = await router.generateReportCommercantTitle(filter,username);
-    const { creditType, debitType } = filter;
+router.generatePDFSoldeCommercantReport = async function (data, filter, res, username) {
+    const {titles, solde, title, generationDate} = await router.generateReportCommercantTitle(filter, username);
+    const {creditType, debitType} = filter;
     let titleRowC = [];
     let titleRowD = [];
     titleRowC.push([
-         {text: 'Client', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-         {text: 'Solde', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}]
-);
+        {text: 'Client', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Solde', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}]
+    );
     titleRowD.push([
         {text: 'Client', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Solde ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}]
@@ -852,12 +907,12 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res,user
 
     let creditReportData = [];
     let debitReportData = [];
-    let totalCreditSolde =0;
-    let totalDebitSolde =0;
+    let totalCreditSolde = 0;
+    let totalDebitSolde = 0;
     for (const balance of data) {
         if (balance.merchant && balance.merchant.name) {
-             if (balance.balance > 0) {
-                totalCreditSolde +=balance.balance;
+            if (balance.balance > 0) {
+                totalCreditSolde += balance.balance;
                 creditReportData.push([
                     {
                         text: balance.merchant?.name.toUpperCase(),
@@ -865,25 +920,30 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res,user
                         alignment: 'center',
                         margin: [0, 3]
                     },
-                    {text: balance.balance.toLocaleString('fr-TN', {
+                    {
+                        text: balance.balance.toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2
-                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]}
+                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]
+                    }
                 ]);
             }
             if (balance.balance < 0) {
-                totalDebitSolde+=balance.balance;
+                totalDebitSolde += balance.balance;
                 debitReportData.push([
 
-                    {text: balance.merchant?.name.toUpperCase() || 'Non spécifié',
+                    {
+                        text: balance.merchant?.name.toUpperCase() || 'Non spécifié',
                         fontSize: 9,
                         alignment: 'center',
                         margin: [0, 3]
                     },
-                    {text: Math.abs(balance.balance).toLocaleString('fr-TN', {
+                    {
+                        text: Math.abs(balance.balance).toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2
-                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]}
+                        }), fontSize: 9, alignment: 'right', margin: [0, 3, 3, 3]
+                    }
                 ]);
             }
         }
@@ -891,16 +951,40 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res,user
 
     debitReportData.push([
         {text: 'Total', fontSize: 10, alignment: 'center', bold: true, margin: [0, 3]},
-        {text: Math.abs(totalDebitSolde).toLocaleString('fr-TN', {style: 'currency',currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]}
+        {
+            text: Math.abs(totalDebitSolde).toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]
+        }
     ]);
     creditReportData.push([
         {text: 'Total', fontSize: 10, alignment: 'center', bold: true, margin: [0, 3],},
-        {text: totalCreditSolde.toLocaleString('fr-TN', { style: 'currency',currency: 'TND', minimumFractionDigits: 2 }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3, 3, 3]}
+        {
+            text: totalCreditSolde.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3, 3, 3]
+        }
     ]);
     let pdfContent = [
-        { text: title, fontSize: 14, alignment: 'center', decoration: 'underline', font: 'Roboto', bold: true, margin: [0, 10] },
-        { text: solde, fontSize: 14, alignment: 'center', margin: [0, 6] },
-        { text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10] }
+        {
+            text: title,
+            fontSize: 14,
+            alignment: 'center',
+            decoration: 'underline',
+            font: 'Roboto',
+            bold: true,
+            margin: [0, 10]
+        },
+        {text: solde, fontSize: 14, alignment: 'center', margin: [0, 6]},
+        {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]}
     ];
     if (filter.creditType && titles.credit) {
         pdfContent.push(
@@ -922,7 +1006,7 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res,user
             pdfContent.push({text: '', pageBreak: 'after'});
         }
         pdfContent.push(
-            {text:titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
+            {text: titles.debit, fontSize: 12, bold: true, alignment: 'left', margin: [0, 20]},
             {
                 columns: [{
                     table: {
@@ -988,44 +1072,53 @@ router.generatePDFSoldeCommercantReport = async function (data, filter, res,user
     }
 }
 
-router.generateExcelSoldeCommercantReport = async function (data, filter, res,username) {
+router.generateExcelSoldeCommercantReport = async function (data, filter, res, username) {
     try {
-        const { titles, solde, generationDate } = await router.generateReportCommercantTitle(filter,username);
-        const { creditType, debitType } = filter;
+        const {titles, solde, generationDate} = await router.generateReportCommercantTitle(filter, username);
+        const {creditType, debitType} = filter;
 
-        const  wb = new xl.Workbook();
+        const wb = new xl.Workbook();
         const headerStyle = wb.createStyle({
-            font: { bold: true, size: 10 },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
-            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
         const rowStyle = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'center', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
         const rowStyleRight = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'right', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
-        const addSheet = (sheetName, titleRow, reportData, totalSolde,titles) =>{
-            const  ws = wb.addWorksheet(sheetName);
+        const addSheet = (sheetName, titleRow, reportData, totalSolde, titles) => {
+            const ws = wb.addWorksheet(sheetName);
 
-            ws.cell(1, 1, 1, 2, true).string(generationDate).style({font: {name: 'Arial', italic: true, size: 10}, alignment: {horizontal: 'right', vertical: 'center'}});
-            ws.cell(2, 1, 2, 2, true).string(titles).style({font: {size: 12, bold: true}, alignment: {horizontal: 'center', vertical: 'center'}});
-            ws.cell(3, 1, 3, 2, true).string(solde).style({font: {size: 12, italic: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true}});
+            ws.cell(1, 1, 1, 2, true).string(generationDate).style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+            ws.cell(2, 1, 2, 2, true).string(titles).style({
+                font: {size: 12, bold: true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+            ws.cell(3, 1, 3, 2, true).string(solde).style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
 
             titleRow.forEach((header, index) => {
                 ws.cell(5, index + 1).string(header.text).style(headerStyle);
@@ -1040,28 +1133,37 @@ router.generateExcelSoldeCommercantReport = async function (data, filter, res,us
                 row.forEach((cell, colIndex) => {
                     if (typeof cell === 'string') {
                         ws.cell(rowIndex + 6, colIndex + 1).string(cell).style(rowStyle);
-                    }
-                    else {
-                        ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00" });
+                    } else {
+                        ws.cell(rowIndex + 6, colIndex + 1).number(parseFloat(cell)).style(rowStyleRight).style({numberFormat: "#,##0.00"});
                     }
                 });
             });
 
             ws.cell(reportData.length + 6, 1).string('Total').style(
-                { font: {size: 10, bold: true}, alignment: {horizontal: 'center', vertical: 'center', wrapText: true},border: {
-                        left: { style: 'thin', color: '#000000' },
-                        right: { style: 'thin', color: '#000000' },
-                        top: { style: 'thin', color: '#000000' },
-                        bottom: { style: 'thin', color: '#000000' }
-                    }});
-            ws.cell(reportData.length + 6, 2).string(totalSolde.toLocaleString("fr-TN", { style: "currency", currency: "TND", minimumFractionDigits: 2 })).style(
-                { font: {size: 10, bold: true}, alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
+                {
+                    font: {size: 10, bold: true},
+                    alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
                     border: {
-                        left: { style: 'thin', color: '#000000' },
-                        right: { style: 'thin', color: '#000000' },
-                        top: { style: 'thin', color: '#000000' },
-                        bottom: { style: 'thin', color: '#000000' }
-                    }});
+                        left: {style: 'thin', color: '#000000'},
+                        right: {style: 'thin', color: '#000000'},
+                        top: {style: 'thin', color: '#000000'},
+                        bottom: {style: 'thin', color: '#000000'}
+                    }
+                });
+            ws.cell(reportData.length + 6, 2).string(totalSolde.toLocaleString("fr-TN", {
+                style: "currency",
+                currency: "TND",
+                minimumFractionDigits: 2
+            })).style(
+                {
+                    font: {size: 10, bold: true}, alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
+                    border: {
+                        left: {style: 'thin', color: '#000000'},
+                        right: {style: 'thin', color: '#000000'},
+                        top: {style: 'thin', color: '#000000'},
+                        bottom: {style: 'thin', color: '#000000'}
+                    }
+                });
 
 
             ws.column(1).setWidth(40);
@@ -1089,18 +1191,18 @@ router.generateExcelSoldeCommercantReport = async function (data, filter, res,us
 
         if (creditType) {
             const titleRowC = [
-                { text: 'Client', alignment: 'center' },
-                { text: 'Solde', alignment: 'center' },
+                {text: 'Client', alignment: 'center'},
+                {text: 'Solde', alignment: 'center'},
             ];
-            addSheet('Client Créditeurs', titleRowC, creditReportData, totalCreditSolde,titles.credit);
+            addSheet('Client Créditeurs', titleRowC, creditReportData, totalCreditSolde, titles.credit);
         }
 
         if (debitType) {
             const titleRowD = [
-                { text: 'Client', alignment: 'center' },
-                { text: 'Solde', alignment: 'center' },
+                {text: 'Client', alignment: 'center'},
+                {text: 'Solde', alignment: 'center'},
             ];
-            addSheet('Clients Débiteurs', titleRowD, debitReportData, totalDebitSolde,titles.debit);
+            addSheet('Clients Débiteurs', titleRowD, debitReportData, totalDebitSolde, titles.debit);
         }
 
 
@@ -1112,7 +1214,7 @@ router.generateExcelSoldeCommercantReport = async function (data, filter, res,us
         const filePath = path.join(excelFile, fileName);
 
         //await workbook.xlsx.writeFile(filePath);
-        wb.write(filePath,function (err, stats){
+        wb.write(filePath, function (err, stats) {
             if (err) {
                 console.error("Error generating Excel file:", err);
                 return res.status(500).send('Error generating Excel file');
@@ -1122,7 +1224,7 @@ router.generateExcelSoldeCommercantReport = async function (data, filter, res,us
         });
     } catch (err) {
         console.error("Erreur lors de la génération du fichier Excel:", err);
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({success: false, message: err.message});
     }
 
 };

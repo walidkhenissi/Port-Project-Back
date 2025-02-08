@@ -64,7 +64,7 @@ module.exports = {
         try {
             const transaction = await sequelize.transaction();
             shipOwner.civilityId = shipOwner.civility ? shipOwner.civility.id : undefined;
-            shipOwner.name=shipOwner.firstName + ' ' + shipOwner.lastName;
+            shipOwner.name = shipOwner.lastName + ' ' + shipOwner.firstName;
             try {
                 if (shipOwner.address && (shipOwner.address.street || shipOwner.address.city || shipOwner.address.postalCode)) {
                     // Create an address
@@ -100,7 +100,7 @@ module.exports = {
 
             shipowner.firstName = toUpdateObject.firstName || shipowner.firstName;
             shipowner.lastName = toUpdateObject.lastName || shipowner.lastName;
-            shipowner.name=shipowner.firstName + ' ' + shipowner.lastName;
+            shipowner.name = shipowner.lastName + ' ' + shipowner.firstName;
             shipowner.civilityId = toUpdateObject.civility.id || shipowner.civility.id;
             shipowner.socialReason = toUpdateObject.socialReason || shipowner.socialReason;
             shipowner.taxRegistrationNumber = toUpdateObject.taxRegistrationNumber || shipowner.taxRegistrationNumber;

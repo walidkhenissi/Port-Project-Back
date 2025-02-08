@@ -48,6 +48,7 @@ router.post('/create', async (req, res) => {
     try {
         //cashTransaction.balance will be updated
         cashTransaction.balance = cashTransaction.balance || 0;
+        cashTransaction.date = tools.refactorDate(cashTransaction.date);
         const created = await dao.create(cashTransaction);
         await router.updateBalance(cashTransaction.date);
         res.status(201).json(new Response(created));
@@ -62,6 +63,7 @@ router.put('/update', async (req, res) => {
     try {
         //cashTransaction.balance will be updated
         cashTransaction.balance = cashTransaction.balance || 0;
+        cashTransaction.date = tools.refactorDate(cashTransaction.date);
         const updated = await dao.update(cashTransaction);
         await router.updateBalance(cashTransaction.date);
         res.status(201).json(new Response(updated));

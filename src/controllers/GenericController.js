@@ -15,6 +15,7 @@ router.post('/find', async function (req, res) {
             where: criteria.where,
             limit: criteria.limit,
             offset: criteria.skip,
+            order: criteria.sort
         });
         const response = new Response();
         response.data=result;

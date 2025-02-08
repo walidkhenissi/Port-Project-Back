@@ -16,6 +16,7 @@ sequelizeAdapter = require('./utils/sequelizeAdapter');
 moment = require("moment");
 _ = require('lodash');
 dbDateFormat = "YYYY-MM-DD";
+dbDateTimeFormat = "YYYY-MM-DD HH:mm:ss";
 productSalesAccountKey = "PRODUCT_SALES";
 producerPaymentAccountKey = "PRODUCER_PAYMENT";
 app.use(session({

@@ -273,24 +273,29 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     const purchasesTransactions = await salesTransactionDao.find({
         where: {
             merchantId: merchantId,
-            boxes: {'>':0},
-            date: {'>=': moment(date).toDate()}
+            boxes: {'!=': null, '>': 0},
+            date: {'>=': moment(date).startOf('day').toDate()}
         },
         sort: {date: 'ASC'}
     });
-    let purchasesTransactionsByDate = _.groupBy(purchasesTransactions, 'date');
+    let purchasesTransactionsByDate = _.groupBy(purchasesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    });
     // console.log("=====================>purchasesTransactionsByDate : " + JSON.stringify(purchasesTransactionsByDate));
-    query = "select * from salesTransactions st " +
+    //Looking for sales that the mechant is the producer
+    let query = "select * from salesTransactions st " +
         "inner join sales s on  st.saleId=s.id " +
         "where" +
         " s.merchantId = " + merchantId +
         " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).format(dbDateFormat) + "'" +
+        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
         " ORDER BY st.date ASC";
     const salesTransactions = await sequelize.query(query, {
         type: QueryTypes.SELECT, raw: true
     });
-    const salesTransactionsByDate = _.groupBy(salesTransactions, 'date');
+    const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    });
     // console.log("=====================>salesTransactionsByDate : " + JSON.stringify(salesTransactionsByDate));
     const nextBoxesTransactions = await dao.list({
         where: {
@@ -303,7 +308,11 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     });
     // console.log("=====================>nextBoxesTransactionsByDate : " + JSON.stringify(nextBoxesTransactionsByDate));
     let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
-    let dates = _.compact(_.uniq(_.union(_.map(purchasesTransactions, 'date'), _.map(salesTransactions, 'date'), _.map(nextBoxesTransactions, function (item) {
+    let dates = _.compact(_.uniq(_.union(_.map(purchasesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    }), _.map(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    }), _.map(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }))));
     // console.log("=====================>dates before sort : " + JSON.stringify(dates));
@@ -312,7 +321,7 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     }, 'asc');
     // console.log("=====================>dates after sort : " + JSON.stringify(dates));
     for (const dateKey in dates) {
-        let date = dates[dateKey];
+        let date = moment(dates[dateKey]).format(dbDateFormat);
         let boxesTransaction = nextBoxesTransactionsByDate[date];
         const purchasesTransactionsAtDate = purchasesTransactionsByDate[date];
         const salesTransactionsAtDate = salesTransactionsByDate[date];
@@ -322,7 +331,7 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
             boxesTransaction = null;
         if (!boxesTransaction) {
             const transaction = {
-                date: moment(date).toDate(),
+                date: tools.refactorDate(date),
                 credit: 0,
                 merchantSalesCredit: _.sumBy(salesTransactionsAtDate, 'boxes'),
                 debit: _.sumBy(purchasesTransactionsAtDate, 'boxes'),
@@ -332,7 +341,7 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
                 isCommissionaryTransaction: false,
                 merchantId: merchantId
             };
-            transaction.balance = previousBalance + transaction.merchantSalesCredit - transaction.debit;
+            // transaction.balance = previousBalance + transaction.merchantSalesCredit - transaction.debit;
             if ((!tools.isFalsey(transaction.merchantSalesCredit) && parseInt(transaction.merchantSalesCredit) != 0)
                 || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
                 boxesTransaction = await dao.create(transaction);
@@ -382,12 +391,14 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
         "where" +
         " s.shipOwnerId = " + shipOwnerId +
         " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).format(dbDateFormat) + "'" +
+        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
         " ORDER BY st.date ASC";
     const salesTransactions = await sequelize.query(query, {
         type: QueryTypes.SELECT, raw: true
     });
-    const salesTransactionsByDate = _.groupBy(salesTransactions, 'date');
+    const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    });
     const nextBoxesTransactions = await dao.list({
         where: {
             shipOwnerId: shipOwnerId,
@@ -398,14 +409,16 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
         return moment(item.date).format(dbDateFormat);
     });
     let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
-    let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, 'date'), _.map(nextBoxesTransactions, function (item) {
+    let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    }), _.map(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }))));
     dates = _.sortBy(dates, function (item) {
         return moment(item).toDate();
     }, 'asc');
     for (const dateKey in dates) {
-        let date = dates[dateKey];
+        let date = moment(dates[dateKey]).format(dbDateFormat);
         let boxesTransaction = nextBoxesTransactionsByDate[date];
         const salesTransactionsAtDate = salesTransactionsByDate[date];
         if (boxesTransaction && boxesTransaction.length)
@@ -414,7 +427,7 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
             boxesTransaction = null;
         if (!boxesTransaction) {
             const transaction = {
-                date: moment(date).toDate(),
+                date: tools.refactorDate(date),
                 credit: _.sumBy(salesTransactionsAtDate, 'boxes'),
                 debit: 0,
                 balance: previousBalance + _.sumBy(salesTransactionsAtDate, 'boxes'),
@@ -474,7 +487,7 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
     const purchasesTransactions = await salesTransactionDao.find({
         where: {
             merchantId: merchantId,
-            boxes: {'>':0},
+            boxes: {'>': 0},
             date: {'>=': moment(date).toDate()}
         },
         sort: {date: 'ASC'}
@@ -485,12 +498,14 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
         "where" +
         " s.merchantId = " + merchantId +
         " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).format(dbDateFormat) + "'" +
+        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
         " ORDER BY st.date ASC";
     const salesTransactions = await sequelize.query(query, {
         type: QueryTypes.SELECT, raw: true
     });
-    const salesTransactionsByDate = _.groupBy(salesTransactions, 'date');
+    const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    });
     const nextBoxesTransactions = await dao.list({
         where: {
             merchantId: merchantId,
@@ -501,14 +516,18 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
         return moment(item.date).format(dbDateFormat);
     });
     let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
-    let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, 'date'), _.map(purchasesTransactions, 'date'), _.map(nextBoxesTransactions, function (item) {
+    let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    }), _.map(purchasesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    }), _.map(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }))));
     dates = _.sortBy(dates, function (item) {
         return moment(item).toDate();
     }, 'asc');
     for (const dateKey in dates) {
-        let date = dates[dateKey];
+        let date = moment(dates[dateKey]).format(dbDateFormat);
         let boxesTransaction = nextBoxesTransactionsByDate[date];
         const salesTransactionsAtDate = salesTransactionsByDate[date];
         const purchasesTransactionsAtDate = purchasesTransactionsByDate[date];
@@ -518,7 +537,7 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
             boxesTransaction = null;
         if (!boxesTransaction) {
             const transaction = {
-                date: moment(date).toDate(),
+                date: tools.refactorDate(date),
                 credit: 0,
                 debit: _.sumBy(purchasesTransactionsAtDate, 'boxes'),
                 merchantSalesCredit: _.sumBy(salesTransactionsAtDate, 'boxes'),

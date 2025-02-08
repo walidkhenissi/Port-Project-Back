@@ -13,6 +13,14 @@ module.exports = {
         date.hour(now.getHours());
         return date;
     },
+    // refactorDate: function (date, hours, minutes, seconds) {
+    //     var now = new Date();
+    //     if (!date)
+    //         return now;
+    //     moment.locale('fr');
+    //     date = moment(date).format('YYYY-MM-DD HH:mm:ss').substring(0, 10);
+    //     return date + " " + (hours ? hours : now.getHours()) + ":" + (minutes ? minutes : now.getMinutes()) + ":" + (seconds ? seconds : now.getSeconds());
+    // },
     cleanTempDirectory: async function (fs, path) {
         if (tools.isFalsey(fs))
             fs = require('fs');

@@ -42,7 +42,7 @@ router.post('/find', async (req, res) => {
         const whereCriteria = _.clone(criteria.where);
         const data = await dao.find(criteria);
         const count = await dao.count({where: whereCriteria});
-        const sum = await dao.sum({where: {id:_.map(data, 'id')}});
+        const sum = await dao.sum({where: {id: _.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;
@@ -133,6 +133,7 @@ router.update = async function (sale) {
     try {
         const oldSale = await dao.get(sale.id);
         sale = await router.calculateValues(sale);
+        sale.producerName = await router.getProducerName(sale);
         sale.name = await router.buildSaleName(sale);
         let criteriaRef;
         if (sale.totalPaid == 0) {
@@ -249,7 +250,7 @@ router.getProducerName = async function (sale) {
     else if (sale.merchantId)
         producer = await Merchant.findByPk(sale.merchantId);
     if (producer)
-        return producer.firstName + ' ' + producer.lastName;
+        return producer.lastName + ' ' + producer.firstName;
     throw new Error('Cant determinate producer name');
 }
 router.getBoatReference = async function (sale) {
@@ -276,6 +277,11 @@ router.buildSaleName = async function (sale) {
         if (name.length > 0)
             name = name.concat('_');
         name = name.concat(moment(sale.date).format('YYYY-MM-DD'));
+    }
+    if (!tools.isFalsey(sale.receiptNumber)) {
+        if (name.length > 0)
+            name = name.concat('_');
+        name = name.concat('N°').concat(sale.receiptNumber);
     }
     if (!tools.isFalsey(sale.totalToPay)) {
         if (name.length > 0)
@@ -325,16 +331,15 @@ router.checkPaymentInfo = async function (sale) {
 
 
 router.post('/generateSalesReport', async (req, res) => {
-    const { startDate, endDate, producer, solde1,solde2 } = req.body;
-    try
-    {
+    const {startDate, endDate, producer, solde1, solde2} = req.body;
+    try {
         const dataToReport = await router.getSalesReportData(req.body);
         const username = req.session.username;
-    if (req.body.excelType){
-        router.generateExcelSalesReport(dataToReport,req.body, res,username);
-    }else if (req.body.pdfType){
-        router.generatePDFSalesReport(dataToReport,req.body, res,username);
-    } else{
+        if (req.body.excelType) {
+            router.generateExcelSalesReport(dataToReport, req.body, res, username);
+        } else if (req.body.pdfType) {
+            router.generatePDFSalesReport(dataToReport, req.body, res, username);
+        } else {
             // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
             res.status(200).json({
                 message: 'Report data fetched successfully',
@@ -379,33 +384,33 @@ router.getSalesReportData = async function (options) {
                 break;
         }
     }
-    if (options.producer){
+    if (options.producer) {
         criteria.where.shipOwnerId = options.producer;
-                }
+    }
     if (!tools.isFalsey(options.soldeRule) && !tools.isFalsey(options.solde1)) {
         switch (options.soldeRule) {
             case 'equals' : {
-                criteria.where.total= options.solde1;
-            break;
-        }
+                criteria.where.total = options.solde1;
+                break;
+            }
             case 'notEquals' : {
                 criteria.where.total = {'!': options.solde1};
-            break;
-        }
+                break;
+            }
             case 'lowerThan' : {
-                criteria.where.total = {'<=':options.solde1};
-            break;
-        }
+                criteria.where.total = {'<=': options.solde1};
+                break;
+            }
             case 'greaterThan' : {
-                criteria.where.total = {'>=':options.solde1};
-            break;
-        }
+                criteria.where.total = {'>=': options.solde1};
+                break;
+            }
             case 'between' : {
                 if (!tools.isFalsey(options.solde2)) {
                     criteria.where.total = {'>=': options.solde1, '<=': options.solde2};
+                }
+                break;
             }
-            break;
-        }
             default:
                 break;
         }
@@ -417,8 +422,8 @@ router.getSalesReportData = async function (options) {
 
     return sales;
 }
-router.generateReportTitle = async function (filter,username) {
-    const {producer, startDate, endDate, dateRule,soldeRule,solde1,solde2} = filter;
+router.generateReportTitle = async function (filter, username) {
+    const {producer, startDate, endDate, dateRule, soldeRule, solde1, solde2} = filter;
     let title = 'Etats des productions ';
     let reportTitle = [];
     let period = '';
@@ -427,10 +432,10 @@ router.generateReportTitle = async function (filter,username) {
     let producerName = '';
     if (producer) {
         const producerData = await Shipowner.findByPk(producer);
-        if(producerData){
-            title=`Etat Du Production : ${producerData.name.toUpperCase()}`;
+        if (producerData) {
+            title = `Etat Du Production : ${producerData.name.toUpperCase()}`;
             producerName = producerData.name;
-    }
+        }
     }
     switch (dateRule) {
         case 'equals':
@@ -478,28 +483,35 @@ router.generateReportTitle = async function (filter,username) {
 
     const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\nPar : ${username || ""}`;
     return {
-        title, reportTitle: reportTitle.join('\n'), period,montant, generationDate
+        title, reportTitle: reportTitle.join('\n'), period, montant, generationDate
     };
 }
 
-router.generatePDFSalesReport = async function (data, filter,res,username) {
-    const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter,username);
+router.generatePDFSalesReport = async function (data, filter, res, username) {
+    const {title, reportTitle, period, montant, generationDate} = await router.generateReportTitle(filter, username);
     let titleRow = [];
     titleRow.push([
-        {text: 'Date', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3] },
-        !filter.producer ? {text: 'Producteur', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]} : null,
-        {text: 'Comission ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
-        {text: 'Total a payer ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
-        {text: 'Paiement ', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]},
-        {text: 'Total Net', fontSize: 10, alignment: 'center',bold: true,fillColor: '#E8EDF0',margin: [0, 3]}
+        {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        !filter.producer ? {
+            text: 'Producteur',
+            fontSize: 10,
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0',
+            margin: [0, 3]
+        } : null,
+        {text: 'Comission ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'Total a payer ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'Paiement ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'Total Net', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]}
     ].filter(Boolean));
     let salesReportData = [];
-    let totalProducerCommissionSum=0;
-    let totalSum =0;
-    let totalToPaySum=0;
+    let totalProducerCommissionSum = 0;
+    let totalSum = 0;
+    let totalToPaySum = 0;
     const filteredData = data.filter(sale => {
         if (!filter.producer && !filter.solde) return true;
-        return (!filter.producer ||  sale.shipOwnerId === parseInt(filter.producer)) &&
+        return (!filter.producer || sale.shipOwnerId === parseInt(filter.producer)) &&
             (!filter.solde || sale.total === filter.solde);
     });
 
@@ -512,7 +524,7 @@ router.generatePDFSalesReport = async function (data, filter,res,username) {
         Object.keys(groupedByProducer).forEach(producer => {
             const producerGroup = groupedByProducer[producer];
             let isFirstRow = true;
-            const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
+            const calculateMargin = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
                 const totalRowHeight = rowSpan * fontSize * lineHeight;
                 const cellHeight = fontSize;
                 const verticalMargin = (totalRowHeight - cellHeight) / 2;
@@ -524,12 +536,42 @@ router.generatePDFSalesReport = async function (data, filter,res,username) {
                 totalSum += sale.total;
 
                 const row = [
-                    isFirstRow ? {text: sale.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(dateGroup.length)} : null,
-                    !filter.producer ? (isFirstRow ? {text: sale.producerName?.toUpperCase()|| "Non spécifié", rowSpan: producerGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(producerGroup.length)}: null) : null,
-                    {text: sale.totalProducerCommission.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'},
-                    {text: sale.totalToPay.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'},
+                    isFirstRow ? {
+                        text: sale.date,
+                        rowSpan: dateGroup.length,
+                        fontSize: 9,
+                        alignment: 'center',
+                        margin: calculateMargin(dateGroup.length)
+                    } : null,
+                    !filter.producer ? (isFirstRow ? {
+                        text: sale.producerName?.toUpperCase() || "Non spécifié",
+                        rowSpan: producerGroup.length,
+                        fontSize: 9,
+                        alignment: 'center',
+                        margin: calculateMargin(producerGroup.length)
+                    } : null) : null,
+                    {
+                        text: sale.totalProducerCommission.toLocaleString('fr-TN', {
+                            style: 'decimal',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                        }), fontSize: 9, alignment: 'right'
+                    },
+                    {
+                        text: sale.totalToPay.toLocaleString('fr-TN', {
+                            style: 'decimal',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                        }), fontSize: 9, alignment: 'right'
+                    },
                     {text: sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié', fontSize: 9, alignment: 'center'},
-                    {text: sale.total.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}), fontSize: 9, alignment: 'right'}
+                    {
+                        text: sale.total.toLocaleString('fr-TN', {
+                            style: 'decimal',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                        }), fontSize: 9, alignment: 'right'
+                    }
 
                 ].filter(Boolean);
                 salesReportData.push(row);
@@ -537,14 +579,39 @@ router.generatePDFSalesReport = async function (data, filter,res,username) {
         });
     });
 
-salesReportData.push([
-    { text: 'Total', fontSize: 10, alignment: 'center', bold: true,colSpan: filter.producer ? 1 : 2,margin: [0, 3]},
-    ...(filter.producer? [] : ['']),
-    { text: totalProducerCommissionSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
-    { text: totalToPaySum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
-   '',
-    { text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true,margin: [0, 3] },
-]);
+    salesReportData.push([
+        {
+            text: 'Total',
+            fontSize: 10,
+            alignment: 'center',
+            bold: true,
+            colSpan: filter.producer ? 1 : 2,
+            margin: [0, 3]
+        },
+        ...(filter.producer ? [] : ['']),
+        {
+            text: totalProducerCommissionSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3]
+        },
+        {
+            text: totalToPaySum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+        '',
+        {
+            text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+    ]);
 
     let docDefinition = {
         pageSize: 'A4',
@@ -555,19 +622,27 @@ salesReportData.push([
             columnGap: 20
         },
         content: [
-            {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
+            {
+                text: reportTitle,
+                fontSize: 14,
+                alignment: 'center',
+                decoration: 'underline',
+                font: 'Roboto',
+                bold: true,
+                margin: [0, 20, 0, 10]
+            },
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 3]},
             {text: montant, fontSize: 14, alignment: 'center', margin: [0, 3]},
             {text: generationDate, fontSize: 10, alignment: 'right', margin: [0, 0, 0, 10]},
             //${username}
             {
-        columns: [
-            {
-                table: {
+                columns: [
+                    {
+                        table: {
                             body: [...titleRow, ...salesReportData],
                             widths: ['auto', !filter.producer ? 95 : 0, 90, 100, 100, '*'].filter(Boolean)
-                },
-                    },] ,
+                        },
+                    },],
 
             },],
 
@@ -617,13 +692,19 @@ salesReportData.push([
 }
 
 
-router.generateExcelSalesReport= async function (data, filter, res,username) {
+router.generateExcelSalesReport = async function (data, filter, res, username) {
     try {
-        const {title, reportTitle, period,montant, generationDate} = await router.generateReportTitle(filter,username);
+        const {
+            title,
+            reportTitle,
+            period,
+            montant,
+            generationDate
+        } = await router.generateReportTitle(filter, username);
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
-        const titleRow = ['Date', (!filter.producer ? 'Producteur':''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
+        const titleRow = ['Date', (!filter.producer ? 'Producteur' : ''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
 
         ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
@@ -634,7 +715,7 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
         ws.cell(2, 1, 2, titleRow.length, true)
             .string(reportTitle)
             .style({
-                font: {size: 12, bold: true,underline:true},
+                font: {size: 12, bold: true, underline: true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
         ws.cell(3, 1, 3, titleRow.length, true)
@@ -648,14 +729,14 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
             .style({
                 font: {size: 12, italic: true},
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
-        });
+            });
 
 
         const headerStyle = wb.createStyle({
-            font: { bold: true, size: 10 },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
-            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
         const tableWidth = 80;
         const columnCount = titleRow.length;
@@ -666,38 +747,38 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'center', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
         const rowStyleRight = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'right', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
 
         let rowIndex = 6;
 
-        const filteredData = data.filter(sale=> {
+        const filteredData = data.filter(sale => {
             return (!filter.producer || sale.shipOwnerId === filter.producer) &&
                 (!filter.solde || sale.total === filter.solde);
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
         const groupedByDate = _.groupBy(filteredData, item => item.date);
 
-        let totalProducerCommissionSum=0;
-        let totalSum =0;
-        let totalToPaySum=0;
+        let totalProducerCommissionSum = 0;
+        let totalSum = 0;
+        let totalToPaySum = 0;
 
         Object.keys(groupedByDate).forEach(date => {
             const dateGroup = groupedByDate[date];
@@ -712,28 +793,37 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
                     totalProducerCommissionSum += sale.totalProducerCommission || 0;
                     totalToPaySum += sale.totalToPay || 0;
                     totalSum += sale.total || 0;
-                            if (isFirstDateRow) {
-                                ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                                    .string(sale.date || "Non spécifié")
-                                    .style(rowStyle);
-                                isFirstDateRow = false;
-                            }
-                            if (!filter.producer) {
-                                if (isFirstProducerRow) {
-                                    ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(sale.producerName?.toUpperCase() || "Non spécifié").style(rowStyle);
-                                    isFirstProducerRow = false;
-            }
-        }
+                    if (isFirstDateRow) {
+                        ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
+                            .string(sale.date || "Non spécifié")
+                            .style(rowStyle);
+                        isFirstDateRow = false;
+                    }
+                    if (!filter.producer) {
+                        if (isFirstProducerRow) {
+                            ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(sale.producerName?.toUpperCase() || "Non spécifié").style(rowStyle);
+                            isFirstProducerRow = false;
+                        }
+                    }
 
-                                let colIndex = 2;
-                                if (!filter.producer) colIndex += 1;
+                    let colIndex = 2;
+                    if (!filter.producer) colIndex += 1;
 
-                            ws.cell(rowIndex, colIndex).string(sale.totalProducerCommission.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 1).string(sale.totalToPay.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 2).string(sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié').style(rowStyle);
-                            ws.cell(rowIndex, colIndex + 3).string(sale.total.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            rowIndex++;
-                        });
+                    ws.cell(rowIndex, colIndex).string(sale.totalProducerCommission.toLocaleString("fr-TN", {
+                        style: "decimal",
+                        minimumFractionDigits: 2
+                    }) || "0.00").style(rowStyleRight);
+                    ws.cell(rowIndex, colIndex + 1).string(sale.totalToPay.toLocaleString("fr-TN", {
+                        style: "decimal",
+                        minimumFractionDigits: 2
+                    }) || "0.00").style(rowStyleRight);
+                    ws.cell(rowIndex, colIndex + 2).string(sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié').style(rowStyle);
+                    ws.cell(rowIndex, colIndex + 3).string(sale.total.toLocaleString("fr-TN", {
+                        style: "decimal",
+                        minimumFractionDigits: 2
+                    }) || "0.00").style(rowStyleRight);
+                    rowIndex++;
+                });
             });
         });
 
@@ -741,20 +831,28 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
         let totalEndCol = 2;
         if (filter.producer) totalEndCol -= 1;
         const totalStyle = wb.createStyle({
-            font: { size: 10, bold: true },
-            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
         const totalPriceStyle = wb.createStyle({
-            font: { size: 9, bold: true },
-            alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+            font: {size: 9, bold: true},
+            alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
         ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
-        const totalData = [totalProducerCommissionSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), totalToPaySum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }), '', totalSum .toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })
+        const totalData = [totalProducerCommissionSum.toLocaleString('fr-TN', {
+            style: 'currency',
+            currency: 'TND',
+            minimumFractionDigits: 2
+        }), totalToPaySum.toLocaleString('fr-TN', {
+            style: 'currency',
+            currency: 'TND',
+            minimumFractionDigits: 2
+        }), '', totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2})
         ];
         totalData.forEach((value, colIndex) => {
-            ws.cell(rowIndex,  totalEndCol + 1 + colIndex)
+            ws.cell(rowIndex, totalEndCol + 1 + colIndex)
                 .string(value.toString())
                 .style(totalPriceStyle);
         });
@@ -766,17 +864,17 @@ router.generateExcelSalesReport= async function (data, filter, res,username) {
         }
         const filePath = path.join(excelFile, fileName);
 
-        wb.write(filePath,function (err, stats){
+        wb.write(filePath, function (err, stats) {
             if (err) {
                 console.error("Error generating Excel file:", err);
                 return res.status(500).send('Error generating Excel file');
             }
-        res.status(201).json(new Response(fileName));
+            res.status(201).json(new Response(fileName));
             res.download(filePath);
         });
     } catch (err) {
         console.error("Erreur lors de la génération du fichier Excel:", err);
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({success: false, message: err.message});
     }
 
 };
