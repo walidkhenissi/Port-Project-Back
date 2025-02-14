@@ -7,7 +7,7 @@ const boxesTransactionController = require("../controllers/boxesTransactionContr
 const saleController = require("../controllers/saleController");
 const commissionController = require("../controllers/commissionController");
 const Response = require("../utils/response");
-const {CommissionValue, Merchant, PaymentInfo, Article} = require("../models");
+const {CommissionValue, Merchant, PaymentInfo, Article, SalesTransaction} = require("../models");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
@@ -15,6 +15,7 @@ const path = require("path");
 const {forEach} = require("lodash/core");
 const xl = require('excel4node');
 const _ = require("lodash");
+const moment = require("moment");
 router.get('/list', async (req, res) => {
     let criteria = req.body;
     try {
@@ -436,7 +437,7 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res,use
                         totalPriceSum += transaction.totalToPayByMerchant;
 
                         const row = [
-                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
+                            isFirstRow ? {text: moment(transaction.date).format(dbDateFormat), rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
                             isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(producerGroup.length)} : null,
                             !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name.toUpperCase() || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(merchantGroup.length)} : null) : null,
                             !filter.article ? (isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 9, alignment: 'center', margin: calculateMargin(articleGroup.length)} : null) : null,
@@ -637,7 +638,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
 
                             if (isFirstDateRow) {
                                 ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                                    .string(transaction.date || "Non spécifié")
+                                    .string(moment(transaction.date).format(dbDateFormat))
                                     .style(rowStyle);
                                 ws.column(1).setWidth(8);
                                 isFirstDateRow = false;
@@ -730,7 +731,13 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
 
 /*****************************/
 router.post('/generateAccountReport',async (req, res) => {
-    // const {startDate, endDate, merchant, article} = req.body;
+  const { dateRule, startDate,endDate,merchant,excelType,pdfType} = req.body;
+
+    if (dateRule === 'readAll') {
+        req.body.startDate = null;
+        req.body.endDate = null;
+    }
+    console.log("req.body:",req.body);
     try {
         const dataToReport = await router.getAccountReportData(req.body);
         const username = req.session.username;
@@ -781,11 +788,14 @@ router.getAccountReportData = async function (options) {
     }
     if (!tools.isFalsey(options.merchant)) criteria.where.merchantId = options.merchant;
     if (!tools.isFalsey(options.saleId)) {criteria.where.saleId = options.saleId;}
-    let transasctions = await salesTransactionDao.findAll(criteria);
+    let transactions = await salesTransactionDao.findAll(criteria);
+    let soldeInitial = 0;
+        if (options.startDate) {
+            soldeInitial = await salesTransactionDao.getSoldeInitial({ where: { startDate: options.startDate } });
+        }
 
-    return transasctions;
-
-}
+        return { soldeInitial, transactions }
+};
 router.generateReportTitleAccount = async function (filter,username ) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
     let title = 'États des comptes des commerçants';
@@ -835,28 +845,29 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
     let titleRow = [];
     titleRow.push(
         [
-           { text: 'Achats',fontSize: 10, colSpan: 10- (filter.merchant ? 1 : 0) , alignment: 'center', bold: true, fillColor: '#E8EDF0' },
+           { text: 'Achats',fontSize: 9, colSpan: 10- (filter.merchant ? 1 : 0) , alignment: 'center', bold: true, fillColor: '#E8EDF0' },
              {}, ...(filter.merchant ? [] : ['']), {}, {}, {}, {}, {}, {},{},
-            { text: 'Règlements',fontSize: 10, colSpan: 3, alignment: 'center', bold: true, fillColor: '#E8EDF0' },
-            {}, {}
+            { text: 'Règlements',fontSize: 9, colSpan: 4, alignment: 'center', bold: true, fillColor: '#E8EDF0' },
+            {}, {},{}
         ],
         [
-        {text: 'Date', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Producteur', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        !filter.merchant ? {text: 'Client', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
-        {text: 'Article', fontSize:9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Quantite', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Poid Net', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Prix Unite', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Sous Total', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Commission', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Prix Total', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Montant', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Type', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'N°Pièce', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
+        {text: 'Date', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Producteur', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        !filter.merchant ? {text: 'Client', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
+        {text: 'Article', fontSize:8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Quantite', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Poid Net', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Prix Unite', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Sous Total', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Commission', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Prix Total', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Montant', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Type', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'N°Pièce', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Solde', fontSize: 8, alignment: 'center', bold: true, fillColor: '#E8EDF0' }
 
     ].filter(Boolean));
-    const filteredData = data.filter(transaction => {
+    const filteredData = data.transactions.filter(transaction => {
         if (!filter.merchant ) return true;
 
         return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant);
@@ -871,8 +882,11 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
     let totalToPayByMerchantSum =0;
     let totalmerchantCommissionSum  =0;
     let totalMerchantPaymentSum =0;
+    let totalRestMerchantPaymentSum =0;
 
-
+    const soldeText = filter.startDate
+        ? `Solde avant le ${filter.startDate} = ${data.soldeInitial.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 })} DT`
+        : `Solde = 0 DT`;
 
     Object.keys(groupedByDate).forEach(date => {
         const dateGroup = groupedByDate[date];
@@ -899,9 +913,9 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                         totalmerchantCommissionSum += transaction.merchantCommission;
                         totalToPayByMerchantSum += transaction.totalToPayByMerchant;
                         totalMerchantPaymentSum +=transaction.totalMerchantPayment;
-
+                        totalRestMerchantPaymentSum +=transaction.restMerchantPayment;
                         const row = [
-                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 8, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
+                            isFirstRow ? {text: moment(transaction.date).format(dbDateFormat), rowSpan: dateGroup.length, fontSize: 8, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
                             isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 8, alignment: 'center',margin: calculateMargin(producerGroup.length)} : null,
                             !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name.toUpperCase() || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 8, alignment: 'center',margin: calculateMargin(merchantGroup.length)} : null) : null,
                             isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 8, alignment: 'center', margin: calculateMargin(articleGroup.length)} : null,
@@ -911,12 +925,16 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                             {text: transaction.totalPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
                             {text: transaction.merchantCommission.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
                             {text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.paymentInfo?.name || 'Non spécifié', fontSize: 8, alignment: 'center'},
-                            {text: transaction.receiptNumber, fontSize: 8, alignment: 'right', margin: [0, 3]}
+                            {text: transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment => payment.value?.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }) || "0.00").join('\n') : "", fontSize: 8, alignment: 'right', margin: [0, 3]},
+                            {text: transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment =>payment.paymentType?.name || 'Non spécifié').join('\n') : '', fontSize: 8, alignment: 'center', margin: [0, 3]},
+                            {text: transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment =>payment.payment?.number || '').join('\n') : '', fontSize: 8, alignment: 'center', margin: [0, 3]},
+                            {text: transaction.restMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]}
 
+                            /*  {text: transaction.totalMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
+                              {text: transaction.paymentInfo?.name || 'Non spécifié', fontSize: 8, alignment: 'center'},
+                              {text: transaction.receiptNumber, fontSize: 8, alignment: 'right', margin: [0, 3]}
+  */
                         ].filter(Boolean);
-
                         salesReportData.push(row);
                     });
                 });
@@ -926,7 +944,7 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
 
    salesReportData.push([{
         text: 'Total',
-        fontSize: 9,
+        fontSize: 8,
         alignment: 'center',
         bold: true,colSpan: 4 -  (filter.merchant ? 1 : 0) , margin: [0, 3]},
         '',
@@ -939,8 +957,9 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         {text: totalmerchantCommissionSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
         {text: totalToPayByMerchantSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
         {text: totalMerchantPaymentSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-         '',''
-    ]);
+         '','',
+       {text: totalRestMerchantPaymentSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]}
+   ]);
 
     let docDefinition = {
         pageSize: 'A4',
@@ -952,15 +971,15 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         content: [
             {text: title, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
-            { text: generationDate, fontSize: 10, alignment: 'right' },
+            {text: generationDate, fontSize: 10, alignment: 'right' },
             ' \n',
-
+            {text:soldeText,  fontSize: 10, alignment: 'left', bold: true, margin: [0, 10]},
             {
                 columns: [{
 
                     table: {
                         body: [...titleRow, ...salesReportData],
-                        widths: ['auto', 95,!filter.merchant ? 82 : 0, 80 ,40, 40, 40,'auto','auto','auto','auto','auto','*'].filter(Boolean),
+                        widths: ['auto', 85,!filter.merchant ? 77 : 0,73,33,33,40,40,'auto','*',42,33,30,'*'].filter(Boolean),
                     },
                 },],
             },],
@@ -1024,8 +1043,8 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
         };
 
 
-        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , 'Article' ,  'Quantite', 'Poid Net', 'Prix Unite','Sous Total',
-            'Commission','Prix Total','Montant','Type','N°Pièce'].filter(Boolean);
+        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , 'Article' ,  'Quantite', 'Poid Net', 'Prix Unite',
+            'Sous Total','Commission','Prix Total','Montant','Type','N°Pièce','Solde'].filter(Boolean);
 
 
         ws.cell(1, 1, 1, titleRow.length, true)
@@ -1049,6 +1068,16 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
         ws.row(1).setHeight(30);
         ws.row(2).setHeight(30);
 
+        const soldeText = filter.startDate
+            ? `Solde avant le ${filter.startDate} = ${data.soldeInitial.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 })} DT`
+            : `Solde = 0 DT`;
+        ws.cell(4, 1, 4, titleRow.length, true)
+            .string(soldeText)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'left', vertical: 'center', wrapText: true}
+            });
+
 
         const headerStyle = wb.createStyle({
             font: { bold: true, size: 10 },
@@ -1056,16 +1085,16 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
             border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
-        const achatsColSpan = 10 - (filter.merchant ? 1 : 0); // Ajuster si le champ "Client" est inclus
-        const reglementsColSpan = 3;
-        ws.cell(4, 1, 4, achatsColSpan, true).string('Achats').style(headerStyle);
-        ws.cell(4, achatsColSpan + 1, 4, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
+        const achatsColSpan = 10 - (filter.merchant ? 1 : 0);
+        const reglementsColSpan = 4;
+        ws.cell(5, 1, 5, achatsColSpan, true).string('Achats').style(headerStyle);
+        ws.cell(5, achatsColSpan + 1,5, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
 
         const tableWidth = 100;
         const columnCount = titleRow.length;
         const columnWidth = Math.floor(tableWidth / columnCount);
         titleRow.forEach((title, index) => {
-            ws.cell(5, index + 1).string(title).style(headerStyle);
+            ws.cell(6, index + 1).string(title).style(headerStyle);
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
@@ -1089,10 +1118,10 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             }
         });
 
-        let rowIndex = 6;
-        const filteredData = data.filter(transaction => {
-            return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
-                (!filter.article || transaction.article?.id === filter.article);
+        let rowIndex = 7;
+        const filteredData = data.transactions.filter(transaction => {
+            if (!filter.merchant ) return true;
+            return (!filter.merchant || transaction.merchant?.id === filter.merchant) ;
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
         const groupedByDate = _.groupBy(filteredData, item => item.date);
@@ -1104,6 +1133,8 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
         let totalToPayByMerchantSum =0;
         let totalmerchantCommissionSum  =0;
         let totalMerchantPaymentSum =0;
+        let totalRestMerchantPaymentSum =0;
+
 
         Object.keys(groupedByDate).forEach(date => {
             const dateGroup = groupedByDate[date];
@@ -1127,10 +1158,11 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
                             totalmerchantCommissionSum += transaction.merchantCommission || 0;
                             totalToPayByMerchantSum += transaction.totalToPayByMerchant || 0;
                             totalMerchantPaymentSum +=transaction.totalMerchantPayment || 0;
+                            totalRestMerchantPaymentSum +=transaction.restMerchantPayment;
 
                             if (isFirstDateRow) {
                                 ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                                    .string(transaction.date || "Non spécifié")
+                                    .string(moment(transaction.date).format(dbDateFormat))
                                     .style(rowStyle);
                                 ws.column(1).setWidth(8);
                                 isFirstDateRow = false;
@@ -1155,17 +1187,18 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
                             ws.column(rowIndex,colIndex).setWidth(15);
                             ws.cell(rowIndex, colIndex+ 1).number(transaction.boxes || 0).style(rowStyle);
                             ws.cell(rowIndex, colIndex + 2).number(transaction.netWeight || 0).style(rowStyle);
+                            ws.column(colIndex + 2).setWidth(10);
                             ws.cell(rowIndex, colIndex + 3).string(transaction.unitPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.column(colIndex+ 3).setWidth(9);
                             ws.cell(rowIndex, colIndex + 4).string(transaction.totalPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                            ws.column(colIndex + 5).setWidth(10);
                             ws.cell(rowIndex, colIndex + 5).string(transaction.merchantCommission.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
                             ws.cell(rowIndex, colIndex + 6).string(transaction.totalToPayByMerchant.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 7).string(transaction.totalMerchantPayment.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 8).string(transaction.paymentInfo?.name || 'Non spécifié').style(rowStyle);
-                            ws.column(rowIndex, colIndex + 8).setWidth(15);
-                            ws.cell(rowIndex, colIndex + 9).string(transaction.receiptNumber|| '0').style(rowStyle);
+                            ws.cell(rowIndex, colIndex + 7).string( transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment => payment.value?.toLocaleString('fr-TN', { style: 'decimal', minimumFractionDigits: 2 }) || "0.00").join('\n') : "" ).style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex + 8).string( transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment =>payment.paymentType?.name || 'Non spécifié').join('\n') : '').style(rowStyle);
+                            ws.cell(rowIndex, colIndex + 9).string( transaction.salesTransactionPayments?.length ? transaction.salesTransactionPayments.map(payment =>payment.payment?.number || '').join('\n') : '').style(rowStyle);
+                            ws.column(colIndex + 10).setWidth(10);
+                            ws.cell(rowIndex, colIndex + 10).string( transaction.restMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2})).style(rowStyleRight);
                             rowIndex++;
-
                         });
                     });
                 });
@@ -1186,9 +1219,18 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
         });
         ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
-        const totalData = [totalQuantitySum, totalWeightSum, '', totalToPayByMerchantSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalmerchantCommissionSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalMerchantPaymentSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),'',''];
-        totalData.forEach((value, colIndex) => {
+        const totalData1 = [totalQuantitySum, totalWeightSum, ''];
+        totalData1.forEach((value, colIndex) => {
             ws.cell(rowIndex,  totalEndCol + 1 + colIndex)
+                .string(value.toString())
+                .style(totalStyle);
+        });
+
+
+        let total=totalEndCol+3;
+        const totalData = [totalToPayByMerchantSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalmerchantCommissionSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalMerchantPaymentSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),'','',totalRestMerchantPaymentSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })];
+        totalData.forEach((value, colIndex) => {
+            ws.cell(rowIndex,  total + 1 + colIndex)
                 .string(value.toString())
                 .style(totalPriceStyle);
         });
