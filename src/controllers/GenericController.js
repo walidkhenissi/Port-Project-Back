@@ -1,7 +1,7 @@
 const {sequelize} = require("../models");
 var router = require('express').Router();
 var Response = require('../utils/response');
-
+moment.locale('fr');
 
 
 router.post('/find', async function (req, res) {

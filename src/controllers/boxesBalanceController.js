@@ -2,6 +2,7 @@ var router = require('express').Router();
 const dao = require("../dao/boxesBalanceDao");
 const Response = require("../utils/response");
 const {sequelize, BoxesTransaction} = require("../models");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

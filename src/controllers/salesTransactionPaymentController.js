@@ -6,6 +6,7 @@ const paymentController = require("../controllers/paymentController");
 const salesTransactionController = require("../controllers/salesTransactionController");
 const Response = require("../utils/response");
 const salesTransactionPaymentDao = require("../dao/salesTransactionPaymentDao");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

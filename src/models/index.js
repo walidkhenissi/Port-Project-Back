@@ -33,7 +33,8 @@ const sequelize = new Sequelize({
         charset: 'utf8',
         collate: 'utf8_general_ci',
         // timestamps: false
-    }
+    },
+    logging: false
 });
 
 const Merchant = MerchantModel(sequelize);

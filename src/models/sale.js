@@ -25,8 +25,7 @@ module.exports = (sequelize) => {
             allowNull: false
         },
         receiptNumber: {
-            type: DataTypes.INTEGER,
-            allowNull: false
+            type: DataTypes.INTEGER
         },
         //boat name + boat number
         boatReference: {

@@ -4,7 +4,7 @@ const {BoatActivityType} = require('../../../models');
 const Response = require("../../../utils/response");
 const saleDao = require("../../../dao/saleDao");
 const boatDao = require("../../../dao/boatDao");
-
+moment.locale('fr');
 
 router.post('/create', async (req, res) => {
     const activityType = req.body;

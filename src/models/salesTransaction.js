@@ -35,8 +35,7 @@ module.exports = (sequelize) => {
             referencesKey: 'id'
         },
         receiptNumber: {
-            type: DataTypes.INTEGER,
-            allowNull: false
+            type: DataTypes.INTEGER
         },
         boxes: {
             type: DataTypes.INTEGER,

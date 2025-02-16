@@ -1,6 +1,7 @@
 var router = require('express').Router();
 const dao = require("../dao/beneficiaryBalanceDao");
 const Response = require("../utils/response");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

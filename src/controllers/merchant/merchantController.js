@@ -7,6 +7,7 @@ const saleDao = require("../../dao/saleDao");
 const salesTransactionDao = require("../../dao/salesTransactionDao");
 const balanceDao = require("../../dao/balanceDao");
 const paymentDao = require("../../dao/paymentDao");
+moment.locale('fr');
 
 router.post('/create', async (req, res) => {
     // console.log("=====================>balance : " + JSON.stringify("======================>create"));

@@ -8,6 +8,7 @@ const cashTransactionController = require("../controllers/cashTransactionControl
 const Response = require("../utils/response");
 const {ConsumptionInfo, PaymentType, Merchant, CashAccount, Bank, Payment} = require("../models");
 const _ = require("lodash");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -60,6 +61,7 @@ router.post('/create', async (req, res) => {
             return res.status(404).json(new Response({errorCode: err.message}, true));
         }
         payment = await router.checkConsumptionInfo(payment);
+        payment.date=tools.refactorDate(payment.date);
         // console.log("=====================>payment : " + JSON.stringify(payment));
         const created = await dao.create(payment);
         const paymentType = await PaymentType.findByPk(created.paymentTypeId);
@@ -78,7 +80,7 @@ router.post('/create', async (req, res) => {
             } else if (created.isCommissionnaryPayment)
                 cashTransactionName = 'Ste Poissons Amich'.concat('-').concat(paymentType.name).concat('-').concat(moment(created.date).format('YYYY-MM-DD')).concat('_').concat(created.value).concat('Dt');
             const createdCashTransaction = await cashTransactionDao.create({
-                date: created.date,
+                date: tools.refactorDate(created.date),
                 name: cashTransactionName,
                 credit: created.isCommissionnaryPayment ? 0 : created.value,
                 debit: created.isCommissionnaryPayment ? created.value : 0,
@@ -117,6 +119,7 @@ router.put('/update', async (req, res) => {
             return res.status(404).json(new Response({errorCode: err.message}, true));
         }
         payment = await router.checkConsumptionInfo(payment);
+        payment.date=tools.refactorDate(payment.date);
         const updated = await dao.update(payment);
         if (updated.merchantId && !updated.isCommissionnaryPayment) {
             await balanceController.updateMerchantBalance(updated.merchantId, updated.date);

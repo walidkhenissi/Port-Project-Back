@@ -2,19 +2,20 @@ var router = require('express').Router();
 const salesTransactionDao = require("../dao/salesTransactionDao");
 const saleDao = require("../dao/saleDao");
 const salesTransactionPaymentDao = require("../dao/salesTransactionPaymentDao");
+const paymentDao = require("../dao/paymentDao");
 const balanceController = require("../controllers/balanceController");
 const boxesTransactionController = require("../controllers/boxesTransactionController");
 const saleController = require("../controllers/saleController");
 const commissionController = require("../controllers/commissionController");
 const Response = require("../utils/response");
-const {CommissionValue, Merchant, PaymentInfo, Article} = require("../models");
-const PdfPrinter = require("pdfmake");
+const {CommissionValue, Merchant, PaymentInfo, Article, Sale, SalesTransaction, Payment} = require("../models");
 const fs = require("fs");
 const path = require("path");
-//const ExcelJS = require("exceljs");
-const {forEach} = require("lodash/core");
 const xl = require('excel4node');
 const _ = require("lodash");
+const {Op} = require("sequelize");
+moment.locale('fr');
+
 router.get('/list', async (req, res) => {
     let criteria = req.body;
     try {
@@ -33,7 +34,7 @@ router.post('/find', async (req, res) => {
         const whereCriteria1 = _.clone(criteria.where);
         const data = await salesTransactionDao.find(criteria);
         const count = await salesTransactionDao.count({where: whereCriteria});
-        const sum = await salesTransactionDao.sum({where: {id:_.map(data, 'id')}});
+        const sum = await salesTransactionDao.sum({where: {id: _.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;
@@ -87,7 +88,9 @@ router.post('/create', async (req, res) => {
         salesTransaction.producerCommission = 0;
         salesTransaction.merchantCommission = 0;
         salesTransaction.date = sale.date;
-        salesTransaction.receiptNumber = sale.receiptNumber;
+        if (!tools.isFalsey(sale.receiptNumber)) {
+            salesTransaction.receiptNumber = sale.receiptNumber;
+        }
         const transactionNumber = await salesTransactionDao.nextSaleNumber(salesTransaction);
         salesTransaction.transactionNumber = 'BL'.concat('_').concat(moment(salesTransaction.date).format('YY')).concat('_').concat(transactionNumber.toString().padStart(6, '0'));
         salesTransaction = await router.BuildSaleTransactionName(salesTransaction);
@@ -266,16 +269,16 @@ router.checkPaymentInfo = async function (salesTransaction) {
     return salesTransaction;
 }
 /**************************************/
-router.post('/generateSalesTransactionReport',async (req, res) => {
+router.post('/generateSalesTransactionReport', async (req, res) => {
     // const {startDate, endDate, merchant, article} = req.body;
     //console.log("valeur de request:",req.session.username);
     try {
         const dataToReport = await router.getSalesTransactionReportData(req.body);
         const username = req.session.username;
         if (req.body.excelType) {
-            await router.generateExcelSalesTransactionReport(dataToReport, req.body, res,username);
+            await router.generateExcelSalesTransactionReport(dataToReport, req.body, res, username);
         } else if (req.body.pdfType) {
-            await router.generatePDFSalesTransactionReport(dataToReport, req.body, res,username);
+            await router.generatePDFSalesTransactionReport(dataToReport, req.body, res, username);
         } else {
             // Si aucun type de fichier n'est spécifié, renvoyez les données sous forme de JSON
             res.status(200).json({
@@ -331,7 +334,7 @@ router.getSalesTransactionReportData = async function (options) {
     return transasctions;
 
 }
-router.generateReportTitle = async function (filter,username ) {
+router.generateReportTitle = async function (filter, username) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
     let title = 'Liste Des Achats Des Commerçants';
     let reportTitle = [];
@@ -384,47 +387,55 @@ router.generateReportTitle = async function (filter,username ) {
     };
 }
 
-router.generatePDFSalesTransactionReport = async function (data, filter, res,username) {
-    const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter,username);
+router.generatePDFSalesTransactionReport = async function (data, filter, res, username) {
+    const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter, username);
     let titleRow = [];
     titleRow.push([
+        !filter.merchant ? {text: 'Client', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
         {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Producteur', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        !filter.merchant ? {text: 'Client', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
         !filter.article ? {text: 'Article', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
-        {text: 'Quantite', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'N° Bon de vente', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Quitt.', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Quant.', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Poid Net', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Prix Unite', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Prix Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}].filter(Boolean));
+        {text: 'Prix Unit.', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Sous Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Commission', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}].filter(Boolean));
     const filteredData = data.filter(transaction => {
         if (!filter.merchant && !filter.article) return true;
 
-        return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant) &&
+        return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
             (!filter.article || transaction.article?.id === filter.article);
     });
     filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
-    const groupedByDate = _.groupBy(filteredData, item => item.date);
 
     let salesReportData = [];
     let totalPriceSum = 0;
     let totalQuantitySum = 0;
     let totalWeightSum = 0;
+    let subTotalPriceSum = 0;
+    let totalCommissionSum = 0;
 
 
-    Object.keys(groupedByDate).forEach(date => {
-        const dateGroup = groupedByDate[date];
-        const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
-        Object.keys(groupedByProducer).forEach(producer => {
-            const producerGroup = groupedByProducer[producer];
-            const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
-            Object.keys(groupedByMerchant).forEach(merchant => {
-                const merchantGroup = groupedByMerchant[merchant];
-                const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
+    const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
+    Object.keys(groupedByMerchant).forEach(merchant => {
+        const merchantGroup = groupedByMerchant[merchant];
+        const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(groupedByDate).forEach(date => {
+            const dateGroup = groupedByDate[date];
+            const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+            Object.keys(groupedByProducer).forEach(producer => {
+                const producerGroup = groupedByProducer[producer];
+                const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
                 Object.keys(groupedByArticle).forEach(article => {
                     const articleGroup = groupedByArticle[article];
 
                     let isFirstRow = true;
-                    const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
+                    const calculateMargin = (rowSpan, lineHeight = 2.5, fontSize = 9) => {
+                        if (rowSpan == 1)
+                            return [0, 0, 0, 0];
                         const totalRowHeight = rowSpan * fontSize * lineHeight; // Hauteur totale pour les lignes fusionnées
                         const cellHeight = fontSize; // Hauteur du texte dans la cellule
                         const verticalMargin = (totalRowHeight - cellHeight) / 2; // Centrage vertical
@@ -433,66 +444,151 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res,use
                     articleGroup.forEach((transaction, index) => {
                         totalQuantitySum += transaction.boxes;
                         totalWeightSum += transaction.netWeight;
+                        subTotalPriceSum += transaction.totalPrice;
+                        totalCommissionSum += transaction.merchantCommission;
                         totalPriceSum += transaction.totalToPayByMerchant;
 
                         const row = [
-                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 9, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
-                            isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(producerGroup.length)} : null,
-                            !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name.toUpperCase() || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center',margin: calculateMargin(merchantGroup.length)} : null) : null,
-                            !filter.article ? (isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 9, alignment: 'center', margin: calculateMargin(articleGroup.length)} : null) : null,
+                            !filter.merchant ? (isFirstRow ? {
+                                text: transaction.merchant?.name.toUpperCase() || "Non spécifié",
+                                rowSpan: merchantGroup.length,
+                                fontSize: 9,
+                                alignment: 'center',
+                                margin: calculateMargin(merchantGroup.length)
+                            } : null) : null,
+                            isFirstRow ? {
+                                text: moment(transaction.date).format('DD-MM-YYYY'),
+                                rowSpan: dateGroup.length,
+                                fontSize: 9,
+                                alignment: 'center',
+                                margin: calculateMargin(dateGroup.length)
+                            } : null,
+                            isFirstRow ? {
+                                text: transaction.sale.producerName.toUpperCase(),
+                                rowSpan: producerGroup.length,
+                                fontSize: 9,
+                                alignment: 'center',
+                                margin: calculateMargin(producerGroup.length)
+                            } : null,
+
+                            !filter.article ? (isFirstRow ? {
+                                text: transaction.article?.name || "Non spécifié",
+                                rowSpan: articleGroup.length,
+                                fontSize: 9,
+                                alignment: 'center',
+                                margin: calculateMargin(articleGroup.length)
+                            } : null) : null,
+                            {text: transaction.receiptNumber, fontSize: 9, alignment: 'center', margin: [0, 3]},
+                            {text: transaction.quittance, fontSize: 9, alignment: 'center', margin: [0, 3]},
                             {text: transaction.boxes, fontSize: 9, alignment: 'center', margin: [0, 3]},
                             {text: transaction.netWeight, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                            {text: transaction.unitPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', margin: [0, 3]}
+                            {
+                                text: transaction.unitPrice.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 9, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.totalPrice.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 9, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.merchantCommission.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 9, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 9, alignment: 'right', margin: [0, 3]
+                            }
                         ].filter(Boolean);
-
                         salesReportData.push(row);
-
-
                     });
                 });
             });
         });
     });
-
     salesReportData.push([{
-          text: 'Total',
-          fontSize: 10,
-          alignment: 'center',
-          bold: true,colSpan: 4 - (filter.article ? 1 : 0) - (filter.merchant ? 1 : 0) , margin: [0, 3]},
-          '',
-          ...(filter.merchant ? [] : ['']),
-          ...(filter.article ? [] : ['']),
-          {text: totalQuantitySum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
-          {text: totalWeightSum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
-          '',
-          {text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3]},
-      ]);
-
-
+        text: 'Total',
+        fontSize: 10,
+        alignment: 'center',
+        bold: true, colSpan: 4 - (filter.article ? 1 : 0) - (filter.merchant ? 1 : 0), margin: [0, 3]
+    },
+        '',
+        ...(filter.merchant ? [] : ['']),
+        ...(filter.article ? [] : ['']),
+        '',
+        '',
+        {text: totalQuantitySum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
+        {text: totalWeightSum, fontSize: 9, alignment: 'center', bold: true, margin: [0, 3]},
+        '',
+        {
+            text: subTotalPriceSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+        {
+            text: totalCommissionSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+        {
+            text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            fontSize: 9,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        }
+    ]);
 
     let docDefinition = {
         pageSize: 'A4',
-        pageMargins: [25, 25, 25,25],
-        pageOrientation: 'portrait',
+        pageMargins: [25, 25, 25, 25],
+        pageOrientation: 'landscape',
         defaultStyle: {
             fontSize: 10, columnGap: 20
         },
         content: [
-            {text: reportTitle, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
+            {
+                text: reportTitle,
+                fontSize: 14,
+                alignment: 'center',
+                decoration: 'underline',
+                font: 'Roboto',
+                bold: true,
+                margin: [0, 20, 0, 10]
+            },
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
-            { text: generationDate, fontSize: 10, alignment: 'right' },
-           ' \n',
+            {text: generationDate, fontSize: 10, alignment: 'right'},
+            ' \n',
 
             {
-            columns: [{
+                columns: [{
 
-                table: {
-                    body: [...titleRow, ...salesReportData],
-                    widths: ['auto', 93,!filter.merchant ? 82 : 0, !filter.article ? 85 : 0, 40, 40, 45, '*'].filter(Boolean),
-                },
+                    table: {
+                        headerRows: 1,
+                        body: [...titleRow, ...salesReportData],
+                        widths: ['auto', 55, !filter.merchant ? 'auto' : 0, !filter.article ? 70 : 0, '*', 30, 30, 30, '*', '*', '*', '*'].filter(Boolean),
+                    },
+                },],
             },],
-        },],
         footer: function (currentPage, pageCount) {
             return {
                 columns: [
@@ -506,7 +602,6 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res,use
             };
         },
     };
-
 // var PdfPrinter = require('pdfmake');
     var fonts = {
         Roboto: {
@@ -516,14 +611,12 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res,use
             bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
         }
     };
-
     var PdfPrinter = require('pdfmake/src/printer');
     var printer = new PdfPrinter(fonts);
     var fs = require('fs');
     var options = {
         // ...
     };
-
     fileName = "achatClient.pdf";
     await tools.cleanTempDirectory(fs, path);
     try {
@@ -538,13 +631,13 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res,use
     }
 }
 
-router.generateExcelSalesTransactionReport = async function (data, filter, res,username) {
+router.generateExcelSalesTransactionReport = async function (data, filter, res, username) {
     try {
-        const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter,username);
+        const {title, reportTitle, period, generationDate} = await router.generateReportTitle(filter, username);
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
-        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , (!filter.article ?'Article' :''  ),  'Quantite', 'Poid Net', 'Prix Unite', 'Prix Total'].filter(Boolean);
+        const titleRow = [(!filter.merchant ? 'Client' : ''), 'Date', 'Producteur', (!filter.article ? 'Article' : ''), 'N° Bon de vente ', 'Quittance', 'Quantite', 'Poid Net', 'Prix Unit.', 'Sous Total', 'Commission', 'Total'].filter(Boolean);
 
         ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
@@ -555,7 +648,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
         ws.cell(2, 1, 2, titleRow.length, true)
             .string(reportTitle)
             .style({
-                font: {size: 12, bold: true,underline:true},
+                font: {size: 12, bold: true, underline: true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
         ws.cell(3, 1, 3, titleRow.length, true)
@@ -569,10 +662,10 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
         ws.cell(4, 1).string('');
 
         const headerStyle = wb.createStyle({
-            font: { bold: true, size: 10 },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
-            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
         const tableWidth = 100;
         const columnCount = titleRow.length;
@@ -582,23 +675,23 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'center', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
         const rowStyleRight = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'right', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
 
@@ -608,103 +701,116 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
                 (!filter.article || transaction.article?.id === filter.article);
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
-        const groupedByDate = _.groupBy(filteredData, item => item.date);
-
-        let totalPriceSum = 0;
+        let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
+        let integerFormat = {numberFormat: '#,##0; (#,##0); -'};
+        let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
+        let currencyFormatStyle = {numberFormat: '_-* # ##0.00\\ [$TND]_-;-* # ##0.00\\ [$TND]_-;_-* "-"??\\ [$TND]_-;_-@_-'};
+        let subTotalPriceSum = 0;
         let totalQuantitySum = 0;
         let totalWeightSum = 0;
-
-
-        Object.keys(groupedByDate).forEach(date => {
-            const dateGroup = groupedByDate[date];
-            const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
-            let isFirstDateRow = true;
-            Object.keys(groupedByProducer).forEach(producer => {
-                const producerGroup = groupedByProducer[producer];
-                const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
-                let isFirstProducerRow = true;
-                Object.keys(groupedByMerchant).forEach(merchant => {
-                    const merchantGroup = groupedByMerchant[merchant];
-                    const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
-                    let isFirstMerchantRow = true;
+        let totalCommissionSum = 0;
+        let totalPriceSum = 0;
+        const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
+        Object.keys(groupedByMerchant).forEach(merchant => {
+            let isFirstMerchantRow = true;
+            const merchantGroup = groupedByMerchant[merchant];
+            const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            Object.keys(groupedByDate).forEach(date => {
+                const dateGroup = groupedByDate[date];
+                const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+                let isFirstDateRow = true;
+                Object.keys(groupedByProducer).forEach(producer => {
+                    const producerGroup = groupedByProducer[producer];
+                    const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
+                    let isFirstProducerRow = true;
                     Object.keys(groupedByArticle).forEach(article => {
                         const articleGroup = groupedByArticle[article];
-
                         articleGroup.forEach((transaction, index) => {
                             totalQuantitySum += transaction.boxes || 0;
                             totalWeightSum += transaction.netWeight || 0;
+                            subTotalPriceSum += transaction.totalPrice || 0;
+                            totalCommissionSum += transaction.merchantCommission || 0;
                             totalPriceSum += transaction.totalToPayByMerchant || 0;
-
-                            if (isFirstDateRow) {
-                                ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                                    .string(transaction.date || "Non spécifié")
-                                    .style(rowStyle);
-                                ws.column(1).setWidth(8);
-                                isFirstDateRow = false;
-                            }
-                            if (isFirstProducerRow) {
-                                ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
-                                isFirstProducerRow = false;
-                            }
-
                             if (!filter.merchant) {
                                 if (isFirstMerchantRow) {
-                                    ws.cell(rowIndex, 3, rowIndex + merchantGroup.length - 1, 3, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    ws.cell(rowIndex, 1, rowIndex + merchantGroup.length - 1, 1, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    ws.column(1).setWidth(20);
                                     isFirstMerchantRow = false;
                                 }
                             }
-
-                            if (!filter.article ) {
-                                 if (!filter.merchant) {
-                               ws.cell(rowIndex, 4,rowIndex + articleGroup.length - 1, 4, true)
-                                        .string(transaction.article?.name.toUpperCase() || "Non spécifié")
-                                        .style(rowStyle);
-                                }else {
-                                     ws.cell(rowIndex, 3, rowIndex + articleGroup.length - 1, 3, true)
-                                         .string(transaction.article?.name.toUpperCase() || "Non spécifié")
+                            if (isFirstDateRow) {
+                                ws.cell(rowIndex, filter.merchant ? 1 : 2, rowIndex + dateGroup.length - 1, filter.merchant ? 1 : 2, true)
+                                    .date(transaction.date).style(dateFormatStyle)
+                                    .style(rowStyle);
+                                ws.column(filter.merchant ? 1 : 2).setWidth(8);
+                                isFirstDateRow = false;
+                            }
+                            if (isFirstProducerRow) {
+                                ws.cell(rowIndex, filter.merchant ? 2 : 3, rowIndex + producerGroup.length - 1, filter.merchant ? 2 : 3, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
+                                ws.column(filter.merchant ? 2 : 3).setWidth(20);
+                                isFirstProducerRow = false;
+                            }
+                            if (!filter.article) {
+                                ws.cell(rowIndex, filter.merchant ? 3 : 4, rowIndex + articleGroup.length - 1, filter.merchant ? 3 : 4, true)
+                                    .string(transaction.article?.name.toUpperCase() || "Non spécifié")
                                     .style(rowStyle);
                             }
-                             }
-                              let colIndex = 3;
-                                  if (!filter.merchant) colIndex += 1;
-                                  if (!filter.article) colIndex += 1;
-                            ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle);
-                                ws.column(colIndex).setWidth(7);
-                            ws.cell(rowIndex, colIndex + 1).number(transaction.netWeight || 0).style(rowStyle);
-                                ws.column(colIndex+ 1).setWidth(7);
-                                ws.cell(rowIndex, colIndex + 2).string(transaction.unitPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                                ws.column(colIndex+ 2).setWidth(9);
-                                ws.cell(rowIndex, colIndex + 3).string(transaction.totalPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
+                            let colIndex = 3;
+                            if (!filter.merchant)
+                                colIndex++;
+                            if (!filter.article)
+                                colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.receiptNumber || 0).style(rowStyle).style(integerFormat);
+                            ws.column(colIndex).setWidth(10);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).string(transaction.quittance || '').style(rowStyle).style(integerFormat);
+                            ws.column(colIndex).setWidth(10);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle).style(integerFormat);
+                            ws.column(colIndex).setWidth(7);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.netWeight || 0).style(rowStyle).style(numberFormat);
+                            ws.column(colIndex).setWidth(10);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.unitPrice).style(rowStyleRight).style(numberFormat);
+                            ws.column(colIndex).setWidth(9);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.totalPrice).style(rowStyleRight).style(numberFormat);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.merchantCommission).style(rowStyleRight).style(numberFormat);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.totalToPayByMerchant).style(rowStyleRight).style(numberFormat);
+                            ws.column(colIndex).setWidth(15);
                             rowIndex++;
-
                         });
                     });
                 });
             });
         });
         let totalStartCol = 1;
-        let totalEndCol = 4;
+        let totalEndCol = 6;
         if (filter.merchant) totalEndCol -= 1;
         if (filter.article) totalEndCol -= 1;
         const totalStyle = wb.createStyle({
-            font: { size: 10, bold: true },
-            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
-        });
-        const totalPriceStyle = wb.createStyle({
-            font: { size: 10, bold: true },
-            alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
         ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
-        const totalData = [totalQuantitySum, totalWeightSum, '', totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 })];
-
-        totalData.forEach((value, colIndex) => {
-            let currentStyle = (colIndex === totalData.length - 1) ? totalPriceStyle : totalStyle;
-            ws.cell(rowIndex, totalEndCol + 1 + colIndex)
-                .string(value.toString())
-                .style(currentStyle);
-        });
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalQuantitySum).style(totalStyle).style(integerFormat);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalWeightSum).style(totalStyle).style(numberFormat);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(subTotalPriceSum).style(totalStyle).style(currencyFormatStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalCommissionSum).style(totalStyle).style(currencyFormatStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalPriceSum).style(totalStyle).style(currencyFormatStyle);
 
         const fileName = "achatClient.xlsx";
         const excelFile = tools.Excel_PATH;
@@ -713,7 +819,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
         }
         const filePath = path.join(excelFile, fileName);
 
-        wb.write(filePath,function (err, stats){
+        wb.write(filePath, function (err, stats) {
             if (err) {
                 console.error("Error generating Excel file:", err);
                 return res.status(500).send('Error generating Excel file');
@@ -723,21 +829,22 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res,u
         });
     } catch (err) {
         console.error("Erreur lors de la génération du fichier Excel:", err);
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({success: false, message: err.message});
     }
 
 };
 
 /*****************************/
-router.post('/generateAccountReport',async (req, res) => {
+router.post('/generateAccountReport', async (req, res) => {
     // const {startDate, endDate, merchant, article} = req.body;
     try {
         const dataToReport = await router.getAccountReportData(req.body);
+        // console.log("=====================>dataToReport : " + JSON.stringify(dataToReport));
         const username = req.session.username;
         if (req.body.excelType) {
-            await router.generateExcelAccountReport(dataToReport, req.body, res,username);
+            await router.generateExcelAccountReport(dataToReport, req.body, res, username);
         } else if (req.body.pdfType) {
-            await router.generatePDFAccountReport(dataToReport, req.body, res,username);
+            await router.generatePDFAccountReport(dataToReport, req.body, res, username);
         } else {
             res.status(200).json({
                 message: 'Report data fetched successfully', data: dataToReport
@@ -750,12 +857,11 @@ router.post('/generateAccountReport',async (req, res) => {
 });
 router.getAccountReportData = async function (options) {
     let criteria = {where: {}};
-
     if (!tools.isFalsey(options.dateRule)) {
+        let startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
+        let endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
         switch (options.dateRule) {
             case 'equals' : {
-                const startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
-                const endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
                 criteria.where.date = {'>=': startOfDay, '<=': endOfDay};
                 break;
             }
@@ -764,31 +870,51 @@ router.getAccountReportData = async function (options) {
                 break;
             }
             case 'lowerThan' : {
-                criteria.where.date = {'<=': options.startDate};
+                criteria.where.date = {'<=': endOfDay};
                 break;
             }
             case 'greaterThan' : {
-                criteria.where.date = {'>=': options.startDate};
+                criteria.where.date = {'>=': startOfDay};
                 break;
             }
             case 'between' : {
-                criteria.where.date = {'>=': options.startDate, '<=': options.endDate};
+                criteria.where.date = {'>=': startOfDay, '<=': new Date(options.endDate).setHours(23, 59, 59, 999)};
                 break;
             }
+            case 'debut':
             default:
                 break;
         }
     }
-    if (!tools.isFalsey(options.merchant)) criteria.where.merchantId = options.merchant;
-    if (!tools.isFalsey(options.saleId)) {criteria.where.saleId = options.saleId;}
+    if (!tools.isFalsey(options.merchant))
+        criteria.where.merchantId = options.merchant;
+    if (!tools.isFalsey(options.saleId)) {
+        criteria.where.saleId = options.saleId;
+    }
+    let cloned = _.clone(criteria.where);
     let transasctions = await salesTransactionDao.findAll(criteria);
-
-    return transasctions;
+    criteria = {where: cloned};
+    criteria.where.isCommissionnaryPayment = false;
+    let payments = await paymentDao.find(criteria);
+    let previousBalance = 0;
+    if (!tools.isFalsey(options.merchant)) {
+        let refDate = _.uniq(_.map(transasctions, 'date')).reduce(function (a, b) {
+            return a < b ? a : b;
+        });
+        refDate = new Date(refDate).setHours(0, 0, 0, 0);
+        let _criteria = {where: {date: {[Op.lt]: refDate}, merchantId: options.merchant}};
+        const salesSum = await SalesTransaction.sum('totalToPayByMerchant', _criteria);
+        previousBalance -= salesSum;
+        _criteria = {where: {date: {[Op.lt]: refDate}, merchantId: options.merchant, isCommissionnaryPayment: false}};
+        const paymentsSum = await Payment.sum('value', _criteria);
+        previousBalance += paymentsSum;
+    }
+    return {transasctions: transasctions, payments: payments, previousBalance: previousBalance};
 
 }
-router.generateReportTitleAccount = async function (filter,username ) {
+router.generateReportTitleAccount = async function (filter, username) {
     const {merchant, article, startDate, endDate, dateRule} = filter;
-    let title = 'États des comptes des commerçants';
+    let title = 'Etat de compte des commerçants';
     let reportTitle = [];
     let period = '';
     let merchantName = '';
@@ -796,7 +922,7 @@ router.generateReportTitleAccount = async function (filter,username ) {
     if (merchant) {
         const merchantData = await Merchant.findByPk(merchant);
         if (merchantData) {
-            title = ` État  Des comptes Du Commerçant : ${merchantData.name.toUpperCase()}`;
+            title = `Etat de compte du commerçant : ${merchantData.name.toUpperCase()}`;
             merchantName = merchantData.name;
         }
     }
@@ -830,63 +956,107 @@ router.generateReportTitleAccount = async function (filter,username ) {
         title, period, generationDate,
     };
 }
-router.generatePDFAccountReport = async function (data, filter, res,username) {
-    const {title, period, generationDate} = await router.generateReportTitleAccount(filter,username);
+router.generatePDFAccountReport = async function (data, filter, res, username) {
+    const {title, period, generationDate} = await router.generateReportTitleAccount(filter, username);
     let titleRow = [];
-    titleRow.push(
-        [
-           { text: 'Achats',fontSize: 10, colSpan: 10- (filter.merchant ? 1 : 0) , alignment: 'center', bold: true, fillColor: '#E8EDF0' },
-             {}, ...(filter.merchant ? [] : ['']), {}, {}, {}, {}, {}, {},{},
-            { text: 'Règlements',fontSize: 10, colSpan: 3, alignment: 'center', bold: true, fillColor: '#E8EDF0' },
-            {}, {}
-        ],
-        [
+    let firstTitleRow = [
+        {
+            text: 'Achats',
+            fontSize: 10,
+            colSpan: 10 - (filter.merchant ? 1 : 0),
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0'
+        }
+    ];
+    firstTitleRow.push({}, {}, {}, {}, {}, {}, {}, {});
+    if (!filter.merchant)
+        firstTitleRow.push({});
+    firstTitleRow.push({
+            text: 'Règlements',
+            fontSize: 10,
+            colSpan: 3,
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0'
+        },
+        {}, {});
+    if (filter.merchant)
+        firstTitleRow.push({
+            text: 'Solde',
+            fontSize: 10,
+            rowSpan: 2,
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0'
+        });
+    firstTitleRow.filter(Boolean);
+    let secondTitleRow = [
+        !filter.merchant ? {
+            text: 'Client',
+            fontSize: 9,
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0'
+        } : null,
         {text: 'Date', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Producteur', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        !filter.merchant ? {text: 'Client', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'} : null,
-        {text: 'Article', fontSize:9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Article', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Quantite', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Poid Net', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Prix Unite', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Prix Unit.', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Sous Total', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Commission', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Prix Total', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Montant', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Type', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'N°Pièce', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
+        {text: 'N°Pièce', fontSize: 9, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        filter.merchant ? {text: ''} : null
+    ].filter(Boolean);
+    titleRow.push(firstTitleRow);
+    titleRow.push(secondTitleRow);
+    const filteredData = data.transasctions.filter(transaction => {
+        if (!filter.merchant) return true;
 
-    ].filter(Boolean));
-    const filteredData = data.filter(transaction => {
-        if (!filter.merchant ) return true;
-
-        return (!filter.merchant ||  transaction.merchant?.id  === filter.merchant);
+        return (!filter.merchant || transaction.merchant?.id === filter.merchant);
     });
     filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
-    const groupedByDate = _.groupBy(filteredData, item => item.date);
 
     let salesReportData = [];
     let totalPriceSum = 0;
     let totalQuantitySum = 0;
     let totalWeightSum = 0;
-    let totalToPayByMerchantSum =0;
-    let totalmerchantCommissionSum  =0;
-    let totalMerchantPaymentSum =0;
-
-
-
-    Object.keys(groupedByDate).forEach(date => {
-        const dateGroup = groupedByDate[date];
-        const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
-        Object.keys(groupedByProducer).forEach(producer => {
-            const producerGroup = groupedByProducer[producer];
-            const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
-            Object.keys(groupedByMerchant).forEach(merchant => {
-                const merchantGroup = groupedByMerchant[merchant];
-                const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
+    let totalToPayByMerchantSum = 0;
+    let totalmerchantCommissionSum = 0;
+    let totalMerchantPaymentSum = 0;
+    let totalRestMerchantPaymentSum = 0;
+    let columnDateHeigth = 0, paymentRowIndex = 0;
+    let previousBalance = data.previousBalance;
+    let balance = previousBalance;
+    let payments = data.payments;
+    const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
+    const paymentsByMerchant = _.groupBy(payments, item => item.merchant?.name);
+    Object.keys(groupedByMerchant).forEach(merchant => {
+        // let isFirstMerchantRow = true;
+        const merchantGroup = groupedByMerchant[merchant];
+        const merchantPaymentsGroup = paymentsByMerchant[merchant];
+        const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
+        const groupedPaymentsByDate = _.groupBy(merchantPaymentsGroup, item => moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(groupedByDate).forEach(date => {
+            const dateGroup = groupedByDate[date];
+            const paymentsDateGroup = groupedPaymentsByDate[date];
+            columnDateHeigth = Math.max(dateGroup.length - 1), (paymentsDateGroup ? (paymentsDateGroup.length - 1) : 0);
+            const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+            // let isFirstDateRow = true;
+            paymentRowIndex = 0;
+            Object.keys(groupedByProducer).forEach(producer => {
+                const producerGroup = groupedByProducer[producer];
+                const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
+                // let isFirstProducerRow = true;
                 Object.keys(groupedByArticle).forEach(article => {
                     const articleGroup = groupedByArticle[article];
                     let isFirstRow = true;
-                    const calculateMargin  = (rowSpan, lineHeight = 1.5, fontSize = 9) => {
+                    const calculateMargin = (rowSpan, lineHeight = 2, fontSize = 9) => {
                         const totalRowHeight = rowSpan * fontSize * lineHeight;
                         const cellHeight = fontSize;
                         const verticalMargin = (totalRowHeight - cellHeight) / 2;
@@ -898,72 +1068,193 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                         totalPriceSum += transaction.totalPrice;
                         totalmerchantCommissionSum += transaction.merchantCommission;
                         totalToPayByMerchantSum += transaction.totalToPayByMerchant;
-                        totalMerchantPaymentSum +=transaction.totalMerchantPayment;
-
+                        totalRestMerchantPaymentSum += transaction.restMerchantPayment;
+                        payment = paymentsDateGroup ? paymentsDateGroup[paymentRowIndex] : null;
+                        balance = balance - transaction.totalToPayByMerchant;
+                        paymentRowIndex++;
+                        if (payment) {
+                            totalMerchantPaymentSum += payment.value || 0;
+                            balance = balance + payment.value;
+                        }
                         const row = [
-                            isFirstRow ? {text: transaction.date, rowSpan: dateGroup.length, fontSize: 8, alignment: 'center', margin:calculateMargin(dateGroup.length)} : null,
-                            isFirstRow ? {text: transaction.sale.producerName.toUpperCase(), rowSpan: producerGroup.length, fontSize: 8, alignment: 'center',margin: calculateMargin(producerGroup.length)} : null,
-                            !filter.merchant ? (isFirstRow ? {text: transaction.merchant?.name.toUpperCase() || "Non spécifié", rowSpan: merchantGroup.length, fontSize: 8, alignment: 'center',margin: calculateMargin(merchantGroup.length)} : null) : null,
-                            isFirstRow ? {text: transaction.article?.name || "Non spécifié", rowSpan: articleGroup.length, fontSize: 8, alignment: 'center', margin: calculateMargin(articleGroup.length)} : null,
+                            !filter.merchant ? (isFirstRow ? {
+                                text: transaction.merchant?.name.toUpperCase() || "Non spécifié",
+                                rowSpan: merchantGroup.length,
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: calculateMargin(merchantGroup.length)
+                            } : null) : null,
+                            isFirstRow ? {
+                                text: moment(transaction.date).format('DD-MM-YYYY'),
+                                rowSpan: dateGroup.length,
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: calculateMargin(dateGroup.length)
+                            } : null,
+                            isFirstRow ? {
+                                text: transaction.sale.producerName.toUpperCase(),
+                                rowSpan: producerGroup.length,
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: calculateMargin(producerGroup.length)
+                            } : null,
+                            isFirstRow ? {
+                                text: transaction.article?.name || "Non spécifié",
+                                rowSpan: articleGroup.length,
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: calculateMargin(articleGroup.length)
+                            } : null,
                             {text: transaction.boxes, fontSize: 8, alignment: 'center', margin: [0, 3]},
                             {text: transaction.netWeight, fontSize: 8, alignment: 'center', margin: [0, 3]},
-                            {text: transaction.unitPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalPrice.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.merchantCommission.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.totalMerchantPayment.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', margin: [0, 3]},
-                            {text: transaction.paymentInfo?.name || 'Non spécifié', fontSize: 8, alignment: 'center'},
-                            {text: transaction.receiptNumber, fontSize: 8, alignment: 'right', margin: [0, 3]}
-
+                            {
+                                text: transaction.unitPrice.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.totalPrice.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.merchantCommission.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: (payment ? payment.value.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }) : ''),
+                                fontSize: 8,
+                                alignment: 'right',
+                                margin: [0, 3]
+                            },
+                            {
+                                text: (payment ? payment.paymentType.name : ''),
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: [0, 3]
+                            },
+                            {
+                                text: (payment ? payment.number : '')
+                                , fontSize: 8, alignment: 'center', margin: [0, 3]
+                            },
+                            filter.merchant ?
+                                {
+                                    text: balance.toLocaleString('fr-TN', {
+                                        style: 'decimal',
+                                        minimumFractionDigits: 2
+                                    }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                                } : null
                         ].filter(Boolean);
-
                         salesReportData.push(row);
                     });
                 });
             });
         });
     });
-
-   salesReportData.push([{
+    salesReportData.push([{
         text: 'Total',
         fontSize: 9,
         alignment: 'center',
-        bold: true,colSpan: 4 -  (filter.merchant ? 1 : 0) , margin: [0, 3]},
+        bold: true, colSpan: 4 - (filter.merchant ? 1 : 0), margin: [0, 3]
+    },
         '',
         ...(filter.merchant ? [] : ['']),
         '',
         {text: totalQuantitySum, fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
-        {text: totalWeightSum, fontSize:8, alignment: 'center', bold: true, margin: [0, 3]},
+        {text: totalWeightSum, fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
         '',
-        {text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-        {text: totalmerchantCommissionSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-        {text: totalToPayByMerchantSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-        {text: totalMerchantPaymentSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-         '',''
-    ]);
+        {
+            text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            fontSize: 8,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+        {
+            text: totalmerchantCommissionSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]
+        },
+        {
+            text: totalToPayByMerchantSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]
+        },
+        {
+            text: totalMerchantPaymentSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]
+        },
+        '', '',
 
+        ...(!filter.merchant ? [] : [{
+            text: balance.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]
+        }])
+    ]);
+    let startDate = filter.startDate || new Date();
+    let refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
+        return a < b ? a : b;
+    });
+    startDate = moment(refDate).isAfter(startDate) ? startDate : refDate;
     let docDefinition = {
         pageSize: 'A4',
-        pageMargins: [25, 25, 25,25],
+        pageMargins: [25, 25, 25, 25],
         pageOrientation: 'landscape',
         defaultStyle: {
             fontSize: 10, columnGap: 20
         },
         content: [
-            {text: title, fontSize: 14, alignment: 'center',decoration: 'underline',font:'Roboto', bold: true, margin: [0, 20, 0, 10]},
+            {
+                text: title,
+                fontSize: 14,
+                alignment: 'center',
+                decoration: 'underline',
+                font: 'Roboto',
+                bold: true,
+                margin: [5, 10, 5, 10]
+            },
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
-            { text: generationDate, fontSize: 10, alignment: 'right' },
-            ' \n',
+            {text: generationDate, fontSize: 10, alignment: 'right'},
+            filter.merchant ? {
+                text: `Solde avant le ${moment(startDate).format('DD-MM-YYYY')} = ${previousBalance.toLocaleString('fr-TN', {
+                    style: 'decimal',
+                    minimumFractionDigits: 2
+                })} DT`, fontSize: 10, alignment: 'left', bold: true, margin: [0, 10]
+            } : null,
 
             {
                 columns: [{
-
                     table: {
+                        headerRows: 2,
                         body: [...titleRow, ...salesReportData],
-                        widths: ['auto', 95,!filter.merchant ? 82 : 0, 80 ,40, 40, 40,'auto','auto','auto','auto','auto','*'].filter(Boolean),
-                    },
-                },],
-            },],
+                        widths: ['auto', filter.merchant ? 120 : 80, !filter.merchant ? 77 : 0, 73, 35, 35, 40, 'auto', 'auto', 'auto', 'auto', 'auto', 'auto', filter.merchant ? 'auto' : 0].filter(Boolean),
+                    }
+                }],
+            }
+        ],
         footer: function (currentPage, pageCount) {
             return {
                 columns: [
@@ -972,10 +1263,10 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
                         alignment: 'right',
                         margin: [0, 0, 40, 80],
                         fontSize: 10
-                    },
-                ],
+                    }
+                ]
             };
-        },
+        }
     };
 
 // var PdfPrinter = require('pdfmake');
@@ -1008,10 +1299,10 @@ router.generatePDFAccountReport = async function (data, filter, res,username) {
         res.status(404).json(new Response(err, true));
     }
 }
-router.generateExcelAccountReport = async function (data, filter, res,username) {
+router.generateExcelAccountReport = async function (data, filter, res, username) {
     try {
-        const {title, period, generationDate} = await router.generateReportTitleAccount(filter,username);
-
+        const {title, period, generationDate} = await router.generateReportTitleAccount(filter, username);
+        // {transasctions:transasctions, payments:payments}
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
         ws.pageSetup = {
@@ -1022,10 +1313,13 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             fitToHeight: 0,
             margins: {left: 0.2, right: 0.2, top: 0.2, bottom: 0.2, footer: 0.1, header: 0.1}
         };
-
-
-        const titleRow = ['Date', 'Producteur',  (!filter.merchant ?'Client':'' ) , 'Article' ,  'Quantite', 'Poid Net', 'Prix Unite','Sous Total',
-            'Commission','Prix Total','Montant','Type','N°Pièce'].filter(Boolean);
+        let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
+        let integerFormat = {numberFormat: '#,##0; (#,##0); -'};
+        let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
+        let currencyFormatStyle = {numberFormat: '_-* # ##0.00\\ [$TND]_-;-* # ##0.00\\ [$TND]_-;_-* "-"??\\ [$TND]_-;_-@_-'};
+        let payments = data.payments;
+        const titleRow = [(!filter.merchant ? 'Client' : ''), 'Date', 'Producteur', 'Article', 'N° Bon de vente', 'Quittance', 'Quantite', 'Poid Net', 'Prix Unit.', 'Sous Total',
+            'Commission', 'Prix Total', 'Montant', 'Type', 'N°Pièce'].filter(Boolean);
 
 
         ws.cell(1, 1, 1, titleRow.length, true)
@@ -1037,7 +1331,7 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
         ws.cell(2, 1, 2, titleRow.length, true)
             .string(title)
             .style({
-                font: {size: 12, bold: true,underline:true},
+                font: {size: 12, bold: true, underline: true},
                 alignment: {horizontal: 'center', vertical: 'center'}
             });
         ws.cell(3, 1, 3, titleRow.length, true)
@@ -1048,75 +1342,96 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             });
         ws.row(1).setHeight(30);
         ws.row(2).setHeight(30);
-
-
+        let previousBalance = data.previousBalance;
+        if (filter.merchant) {
+            let startDate = filter.startDate || new Date();
+            let refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
+                return a < b ? a : b;
+            });
+            startDate = moment(refDate).isAfter(startDate) ? startDate : refDate;
+            const previousBalanceStyle = wb.createStyle({
+                font: {size: 11, italic: true, bold: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
+            ws.cell(4, 1, 4, 2, true).string('Solde avant le '.concat(moment(startDate).format('DD/MM/YYYY')).concat(' : ')).style(previousBalanceStyle);
+            ws.cell(4, 3, 4, 4, true).number(previousBalance).style(previousBalanceStyle).style(currencyFormatStyle);
+        }
         const headerStyle = wb.createStyle({
-            font: { bold: true, size: 10 },
-            alignment: { horizontal: 'center', vertical: 'center' },
-            fill: { type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0' },
-            border : {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
         });
-        const achatsColSpan = 10 - (filter.merchant ? 1 : 0); // Ajuster si le champ "Client" est inclus
+        const achatsColSpan = 12 - (filter.merchant ? 1 : 0); // Ajuster si le champ "Client" est inclus
         const reglementsColSpan = 3;
-        ws.cell(4, 1, 4, achatsColSpan, true).string('Achats').style(headerStyle);
-        ws.cell(4, achatsColSpan + 1, 4, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
+        ws.cell(5, 1, 5, achatsColSpan, true).string('Achats').style(headerStyle);
+        ws.cell(5, achatsColSpan + 1, 5, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
+        if (filter.merchant)
+            ws.cell(5, achatsColSpan + reglementsColSpan + 1, 6, achatsColSpan + reglementsColSpan + 1, true).string('Solde').style(headerStyle);
 
         const tableWidth = 100;
         const columnCount = titleRow.length;
         const columnWidth = Math.floor(tableWidth / columnCount);
         titleRow.forEach((title, index) => {
-            ws.cell(5, index + 1).string(title).style(headerStyle);
+            ws.cell(6, index + 1).string(title).style(headerStyle);
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'center', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
         const rowStyleRight = wb.createStyle({
-            font: { size: 9 },
-            alignment: { horizontal: 'right', vertical: 'center' },
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
             border: {
-                left: { style: 'thin', color: '#000000' },
-                right: { style: 'thin', color: '#000000' },
-                top: { style: 'thin', color: '#000000' },
-                bottom: { style: 'thin', color: '#000000' }
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
             }
         });
 
-        let rowIndex = 6;
-        const filteredData = data.filter(transaction => {
+        let rowIndex = 7;
+        const filteredData = data.transasctions.filter(transaction => {
             return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
                 (!filter.article || transaction.article?.id === filter.article);
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
-        const groupedByDate = _.groupBy(filteredData, item => item.date);
 
 
         let totalPriceSum = 0;
         let totalQuantitySum = 0;
         let totalWeightSum = 0;
-        let totalToPayByMerchantSum =0;
-        let totalmerchantCommissionSum  =0;
-        let totalMerchantPaymentSum =0;
-
-        Object.keys(groupedByDate).forEach(date => {
-            const dateGroup = groupedByDate[date];
-            const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
-            let isFirstDateRow = true;
-            Object.keys(groupedByProducer).forEach(producer => {
-                const producerGroup = groupedByProducer[producer];
-                const groupedByMerchant = _.groupBy(producerGroup, item => item.merchant?.name);
-                let isFirstProducerRow = true;
-                Object.keys(groupedByMerchant).forEach(merchant => {
-                    const merchantGroup = groupedByMerchant[merchant];
-                    const groupedByArticle = _.groupBy(merchantGroup, item => item.article?.name);
-                    let isFirstMerchantRow = true;
+        let totalToPayByMerchantSum = 0;
+        let totalmerchantCommissionSum = 0;
+        let totalMerchantPaymentSum = 0;
+        let colIndex = 1, columnDateHeigth = 1, paymentRowIndex, payment;
+        let balance = previousBalance;
+        const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
+        const paymentsByMerchant = _.groupBy(payments, item => item.merchant?.name);
+        Object.keys(groupedByMerchant).forEach(merchant => {
+            let isFirstMerchantRow = true;
+            const merchantGroup = groupedByMerchant[merchant];
+            const merchantPaymentsGroup = paymentsByMerchant[merchant];
+            const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            const groupedPaymentsByDate = _.groupBy(merchantPaymentsGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            Object.keys(groupedByDate).forEach(date => {
+                const dateGroup = groupedByDate[date];
+                const paymentsDateGroup = groupedPaymentsByDate[date];
+                columnDateHeigth = Math.max(dateGroup.length - 1), (paymentsDateGroup ? (paymentsDateGroup.length - 1) : 0);
+                const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
+                let isFirstDateRow = true;
+                paymentRowIndex = 0;
+                Object.keys(groupedByProducer).forEach(producer => {
+                    const producerGroup = groupedByProducer[producer];
+                    const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
+                    let isFirstProducerRow = true;
                     Object.keys(groupedByArticle).forEach(article => {
                         const articleGroup = groupedByArticle[article];
 
@@ -1126,81 +1441,124 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
                             totalPriceSum += transaction.totalPrice || 0;
                             totalmerchantCommissionSum += transaction.merchantCommission || 0;
                             totalToPayByMerchantSum += transaction.totalToPayByMerchant || 0;
-                            totalMerchantPaymentSum +=transaction.totalMerchantPayment || 0;
-
-                            if (isFirstDateRow) {
-                                ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                                    .string(transaction.date || "Non spécifié")
-                                    .style(rowStyle);
-                                ws.column(1).setWidth(8);
-                                isFirstDateRow = false;
+                            balance -= transaction.totalToPayByMerchant || 0;
+                            colIndex = 1;
+                            payment = paymentsDateGroup ? paymentsDateGroup[paymentRowIndex] : null;
+                            paymentRowIndex++;
+                            if (payment) {
+                                totalMerchantPaymentSum += payment.value || 0;
+                                balance += payment.value;
                             }
-                            if (isFirstProducerRow) {
-                                ws.cell(rowIndex, 2, rowIndex + producerGroup.length - 1, 2, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
-                                ws.column(2).setWidth(15);
-                                isFirstProducerRow = false;
-                            }
-
                             if (!filter.merchant) {
                                 if (isFirstMerchantRow) {
-                                    ws.cell(rowIndex, 3, rowIndex + merchantGroup.length - 1, 3, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
-                                    ws.column(3).setWidth(15);
+                                    ws.cell(rowIndex, colIndex, rowIndex + merchantGroup.length - 1, colIndex, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    ws.column(colIndex).setWidth(15);
                                     isFirstMerchantRow = false;
                                 }
+                                colIndex++;
                             }
-
-                            let colIndex = 3;
-                            if (!filter.merchant) colIndex += 1;
-                            ws.cell(rowIndex,colIndex,rowIndex + articleGroup.length - 1, colIndex, true).string(transaction.article?.name.toUpperCase() || "Non spécifié").style(rowStyle);
-                            ws.column(rowIndex,colIndex).setWidth(15);
-                            ws.cell(rowIndex, colIndex+ 1).number(transaction.boxes || 0).style(rowStyle);
-                            ws.cell(rowIndex, colIndex + 2).number(transaction.netWeight || 0).style(rowStyle);
-                            ws.cell(rowIndex, colIndex + 3).string(transaction.unitPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.column(colIndex+ 3).setWidth(9);
-                            ws.cell(rowIndex, colIndex + 4).string(transaction.totalPrice.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 5).string(transaction.merchantCommission.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 6).string(transaction.totalToPayByMerchant.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 7).string(transaction.totalMerchantPayment.toLocaleString("fr-TN", {style: "decimal", minimumFractionDigits: 2}) || "0.00").style(rowStyleRight);
-                            ws.cell(rowIndex, colIndex + 8).string(transaction.paymentInfo?.name || 'Non spécifié').style(rowStyle);
-                            ws.column(rowIndex, colIndex + 8).setWidth(15);
-                            ws.cell(rowIndex, colIndex + 9).string(transaction.receiptNumber|| '0').style(rowStyle);
+                            if (isFirstDateRow) {
+                                ws.cell(rowIndex, colIndex, rowIndex + columnDateHeigth, colIndex, true).date(transaction.date).style(rowStyle).style(dateFormatStyle);
+                                ws.column(colIndex).setWidth(8);
+                                isFirstDateRow = false;
+                            }
+                            colIndex++;
+                            if (isFirstProducerRow) {
+                                ws.cell(rowIndex, colIndex, rowIndex + producerGroup.length - 1, colIndex, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
+                                ws.column(colIndex).setWidth(15);
+                                isFirstProducerRow = false;
+                            }
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex, rowIndex + articleGroup.length - 1, colIndex, true).string(transaction.article?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                            ws.column(colIndex).setWidth(9);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.receiptNumber || 0).style(rowStyle);
+                            ws.column(colIndex).setWidth(12);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).string(transaction.quittance || '').style(rowStyle);
+                            ws.column(colIndex).setWidth(12);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.boxes || 0).style(rowStyle).style(integerFormat);
+                            ws.column(colIndex).setWidth(12);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.netWeight || 0).style(rowStyle).style(numberFormat);
+                            ws.column(colIndex).setWidth(12);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.unitPrice).style(numberFormat).style(rowStyleRight);
+                            ws.column(colIndex).setWidth(12);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.totalPrice).style(numberFormat).style(rowStyleRight);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.merchantCommission).style(numberFormat).style(rowStyleRight);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(transaction.totalToPayByMerchant).style(numberFormat).style(rowStyleRight);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).number(payment ? payment.value : 0).style(numberFormat).style(rowStyleRight);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).string(payment ? payment.paymentType.name : '').style(rowStyle);
+                            ws.column(colIndex).setWidth(15);
+                            colIndex++;
+                            ws.cell(rowIndex, colIndex).string(payment ? (payment.nymber || '') : '').style(rowStyle);
+                            ws.column(colIndex).setWidth(15);
+                            if (filter.merchant) {
+                                colIndex++;
+                                ws.cell(rowIndex, colIndex).number(balance).style(rowStyle).style(numberFormat);
+                                ws.column(colIndex).setWidth(15);
+                            }
                             rowIndex++;
-
                         });
                     });
                 });
             });
         });
-
-        let totalStartCol = 1;
-        let totalEndCol = 4;
-        if (filter.merchant) totalEndCol -= 1;
+        colIndex = 6;
+        if (filter.merchant)
+            colIndex--;
         const totalStyle = wb.createStyle({
-            font: { size: 10, bold: true },
-            alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
         const totalPriceStyle = wb.createStyle({
-            font: { size: 10, bold: true },
-            alignment: { horizontal: 'right', vertical: 'center', wrapText: true },
-            border: { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
-        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
-        const totalData = [totalQuantitySum, totalWeightSum, '', totalToPayByMerchantSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalmerchantCommissionSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalPriceSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),totalMerchantPaymentSum.toLocaleString('fr-TN', { style: 'currency', currency: 'TND', minimumFractionDigits: 2 }),'',''];
-        totalData.forEach((value, colIndex) => {
-            ws.cell(rowIndex,  totalEndCol + 1 + colIndex)
-                .string(value.toString())
-                .style(totalPriceStyle);
-        });
-
-        const fileName = "etatDuCommercant.xlsx";
+        ws.cell(rowIndex, 1, rowIndex, colIndex, true).string('Total').style(totalStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalQuantitySum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalWeightSum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).style(totalPriceStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalPriceSum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalmerchantCommissionSum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalToPayByMerchantSum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalMerchantPaymentSum).style(totalPriceStyle).style(currencyFormatStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).style(totalPriceStyle);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).style(totalPriceStyle);
+        if (filter.merchant) {
+            colIndex++;
+            ws.cell(rowIndex, colIndex).number(balance).style(totalPriceStyle).style(currencyFormatStyle);
+        }
+        const fileName = "Etat_du_compte_commercant.xlsx";
         const excelFile = tools.Excel_PATH;
         if (!fs.existsSync(excelFile)) {
             fs.mkdirSync(excelFile, {recursive: true});
         }
         const filePath = path.join(excelFile, fileName);
 
-        wb.write(filePath,function (err, stats){
+        wb.write(filePath, function (err, stats) {
             if (err) {
                 console.error("Error generating Excel file:", err);
                 return res.status(500).send('Error generating Excel file');
@@ -1208,10 +1566,12 @@ router.generateExcelAccountReport = async function (data, filter, res,username) 
             res.status(201).json(new Response(fileName));
             res.download(filePath);
         });
-    } catch (err) {
+    } catch
+        (err) {
         console.error("Erreur lors de la génération du fichier Excel:", err);
-        res.status(500).json({ success: false, message: err.message });
+        res.status(500).json({success: false, message: err.message});
     }
 
-};
+}
+;
 module.exports = router;

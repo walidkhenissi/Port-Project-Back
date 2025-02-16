@@ -6,6 +6,7 @@ const boxesBalanceController = require("../controllers/boxesBalanceController");
 const Response = require("../utils/response");
 const {sequelize, BoxesTransaction, Merchant, Shipowner} = require("../models");
 const {QueryTypes, Op} = require("sequelize");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

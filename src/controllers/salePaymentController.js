@@ -6,6 +6,7 @@ const paymentDao = require("../dao/paymentDao");
 const paymentController = require("./paymentController");
 const saleController = require("./saleController");
 const balanceController = require("./balanceController");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

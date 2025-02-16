@@ -2,6 +2,7 @@ var router = require('express').Router();
 const dao = require("../dao/article Dao");
 const Response = require("../utils/response");
 const salesTransactionDao = require("../dao/salesTransactionDao");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

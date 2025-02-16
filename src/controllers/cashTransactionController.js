@@ -3,6 +3,7 @@ const dao = require("../dao/cashTransactionDao");
 const Response = require("../utils/response");
 const {CashTransaction} = require("../models");
 const {Op} = require("sequelize");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

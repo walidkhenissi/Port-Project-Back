@@ -30,7 +30,17 @@ module.exports = (sequelize) => {
             references: SalesTransaction,
             referencesKey: 'id',
             allowNull: false
-        }
+        },
+        saleNumber: {
+            type: DataTypes.STRING,
+            allowNull: false
+        },
+        saleReceiptNumber: {
+            type: DataTypes.INTEGER
+        },
+        sateTransactionQuittance: {
+            type: DataTypes.STRING
+        },
     });
     return CommissionValue;
 };

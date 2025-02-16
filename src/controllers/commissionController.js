@@ -7,6 +7,7 @@ const salesTransactionDao = require("../dao/salesTransactionDao");
 const commissionValueDao = require("../dao/commissionValueDao");
 const commissionValueController = require("../controllers/commissionValueController");
 const saleController = require("../controllers/saleController");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;

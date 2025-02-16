@@ -10,20 +10,16 @@ const {
     Merchant,
     Shipowner,
     CommissionValue,
-    Commission,
-    SalesTransaction,
     PaymentInfo,
-    Article,
-    Sale
+    Sale, SalesTransaction
 } = require("../models");
 const boxesTransactionController = require("./boxesTransactionController");
 const fs = require("fs");
 const path = require("path");
-const PdfPrinter = require("pdfmake");
-const ExcelJS = require('exceljs');
 const _ = require("lodash");
 const xl = require("excel4node");
 const {Op} = require("sequelize");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -73,8 +69,8 @@ router.post('/create', async (req, res) => {
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
         if (!sale.date)
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
-        if (tools.isFalsey(sale.receiptNumber))
-            return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
+        // if (tools.isFalsey(sale.receiptNumber))
+        //     return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
         const saleNumber = await dao.nextSaleNumber(sale);
         sale.number = moment(sale.date).format('YY').concat('_').concat(saleNumber.toString().padStart(6, '0'));
         sale.producerName = await router.getProducerName(sale);
@@ -87,9 +83,14 @@ router.post('/create', async (req, res) => {
             throw new Error('No payment Info definition Error');
             return;
         }
-        const found = await Sale.findOne({where: {receiptNumber: sale.receiptNumber}});
-        if (found) {
-            return res.status(404).json(new Response({errorCode: '#FOUND_RECEIPT_NUMBER_ERROR'}, true));
+        if (tools.isFalsey(sale.receiptNumber) || sale.receiptNumber == 0) {
+            sale.receiptNumber = null;
+        }
+        if (!tools.isFalsey(sale.receiptNumber)) {
+            const found = await Sale.findOne({where: {receiptNumber: sale.receiptNumber}});
+            if (found) {
+                return res.status(404).json(new Response({errorCode: '#FOUND_RECEIPT_NUMBER_ERROR'}, true));
+            }
         }
         sale.paymentInfoId = paymentInfo.id;
         sale.total = 0;
@@ -98,6 +99,7 @@ router.post('/create', async (req, res) => {
         sale.totalPaid = 0;
         sale.totalProducerCommission = 0;
         sale.totalMerchantCommission = 0;
+        sale.date = tools.refactorDate(sale.date);
         const created = await dao.create(sale);
         res.status(201).json(new Response(created));
     } catch (error) {
@@ -115,11 +117,16 @@ router.put('/update', async (req, res) => {
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
         if (!sale.date)
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
-        if (tools.isFalsey(sale.receiptNumber))
-            return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
-        const found = await Sale.findOne({where: {id: {[Op.ne]: sale.id}, receiptNumber: sale.receiptNumber}});
-        if (found) {
-            return res.status(404).json(new Response({errorCode: '#FOUND_RECEIPT_NUMBER_ERROR'}, true));
+        // if (tools.isFalsey(sale.receiptNumber))
+        //     return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
+        if (tools.isFalsey(sale.receiptNumber) || sale.receiptNumber == 0) {
+            sale.receiptNumber = null;
+        }
+        if (!tools.isFalsey(sale.receiptNumber)) {
+            const found = await Sale.findOne({where: {id: {[Op.ne]: sale.id}, receiptNumber: sale.receiptNumber}});
+            if (found) {
+                return res.status(404).json(new Response({errorCode: '#FOUND_RECEIPT_NUMBER_ERROR'}, true));
+            }
         }
         const updated = await router.update(sale);
         res.status(201).json(new Response(updated));
@@ -149,14 +156,20 @@ router.update = async function (sale) {
             return;
         }
         sale.paymentInfoId = paymentInfo.id;
+        sale.date = tools.refactorDate(sale.date);
         const updated = await dao.update(sale);
-        if ((!moment(oldSale.date).isSame(sale.date)) || (sale.receiptNumber != oldSale.receiptNumber)) {
-            for (const key in oldSale.saleTransactions) {
-                const saleTransaction = oldSale.saleTransactions[key];
-                saleTransaction.date = sale.date;
-                saleTransaction.receiptNumber = sale.receiptNumber;
-                await salesTransactionDao.update(saleTransaction);
-            }
+        if ((!moment(oldSale.date).isSame(sale.date)) || ((!tools.isFalsey(sale.receiptNumber) || !tools.isFalsey(oldSale.receiptNumber)) && sale.receiptNumber != oldSale.receiptNumber)) {
+            const commissionController = require("../controllers/commissionController");
+            //Update salesTransactions with new values
+            await SalesTransaction.update({
+                date: sale.date,
+                receiptNumber: sale.receiptNumber
+            }, {where: {saleId: sale.id}});
+            //Update commissionValues with new values
+            await CommissionValue.update({
+                date: sale.date,
+                saleReceiptNumber: sale.receiptNumber
+            }, {where: {salesTransactionId: _.uniq(_.map(oldSale.saleTransactions, 'id'))}});
         }
         await boxesTransactionController.persistBySale(oldSale);
         await boxesTransactionController.persistBySale(updated);
@@ -500,15 +513,15 @@ router.generatePDFSalesReport = async function (data, filter, res, username) {
             fillColor: '#E8EDF0',
             margin: [0, 3]
         } : null,
-        {text: 'Comission ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
-        {text: 'Total a payer ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
-        {text: 'Paiement ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'N° Bon de vente ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'Sous Total ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
+        {text: 'Commission ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]},
         {text: 'Total Net', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0', margin: [0, 3]}
     ].filter(Boolean));
     let salesReportData = [];
     let totalProducerCommissionSum = 0;
     let totalSum = 0;
-    let totalToPaySum = 0;
+    let totalNetSum = 0;
     const filteredData = data.filter(sale => {
         if (!filter.producer && !filter.solde) return true;
         return (!filter.producer || sale.shipOwnerId === parseInt(filter.producer)) &&
@@ -532,12 +545,12 @@ router.generatePDFSalesReport = async function (data, filter, res, username) {
             };
             producerGroup.forEach((sale, index) => {
                 totalProducerCommissionSum += sale.totalProducerCommission;
-                totalToPaySum += sale.totalToPay;
+                totalNetSum += sale.totalToPay;
                 totalSum += sale.total;
 
                 const row = [
                     isFirstRow ? {
-                        text: sale.date,
+                        text: moment(sale.date).format('DD-MM-YYYY'),
                         rowSpan: dateGroup.length,
                         fontSize: 9,
                         alignment: 'center',
@@ -551,6 +564,16 @@ router.generatePDFSalesReport = async function (data, filter, res, username) {
                         margin: calculateMargin(producerGroup.length)
                     } : null) : null,
                     {
+                        text: sale.receiptNumber, fontSize: 9, alignment: 'center'
+                    },
+                    {
+                        text: sale.total.toLocaleString('fr-TN', {
+                            style: 'decimal',
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2
+                        }), fontSize: 9, alignment: 'right'
+                    },
+                    {
                         text: sale.totalProducerCommission.toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2,
@@ -559,14 +582,6 @@ router.generatePDFSalesReport = async function (data, filter, res, username) {
                     },
                     {
                         text: sale.totalToPay.toLocaleString('fr-TN', {
-                            style: 'decimal',
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2
-                        }), fontSize: 9, alignment: 'right'
-                    },
-                    {text: sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié', fontSize: 9, alignment: 'center'},
-                    {
-                        text: sale.total.toLocaleString('fr-TN', {
                             style: 'decimal',
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2
@@ -585,32 +600,35 @@ router.generatePDFSalesReport = async function (data, filter, res, username) {
             fontSize: 10,
             alignment: 'center',
             bold: true,
-            colSpan: filter.producer ? 1 : 2,
+            colSpan: filter.producer ? 2 : 3,
             margin: [0, 3]
         },
-        ...(filter.producer ? [] : ['']),
+        ...(filter.producer ? [''] : ['', '']),
         {
-            text: totalProducerCommissionSum.toLocaleString('fr-TN', {
+            text: totalSum.toLocaleString('fr-TN', {
                 style: 'currency',
                 currency: 'TND',
                 minimumFractionDigits: 2
             }), fontSize: 9, alignment: 'right', bold: true, margin: [0, 3]
         },
         {
-            text: totalToPaySum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            text: totalProducerCommissionSum.toLocaleString('fr-TN', {
+                style: 'currency',
+                currency: 'TND',
+                minimumFractionDigits: 2
+            }),
             fontSize: 9,
             alignment: 'right',
             bold: true,
             margin: [0, 3]
         },
-        '',
         {
-            text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            text: totalNetSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
             fontSize: 9,
             alignment: 'right',
             bold: true,
             margin: [0, 3]
-        },
+        }
     ]);
 
     let docDefinition = {
@@ -704,7 +722,7 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
-        const titleRow = ['Date', (!filter.producer ? 'Producteur' : ''), 'Comission', 'Total à Payer', 'Paiement', 'Prix Total'].filter(Boolean);
+        const titleRow = ['Date', (!filter.producer ? 'Producteur' : ''), 'N° Bon de vente', 'Total', 'Comission', 'Total Net'].filter(Boolean);
 
         ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
@@ -779,7 +797,10 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
         let totalProducerCommissionSum = 0;
         let totalSum = 0;
         let totalToPaySum = 0;
-
+        let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
+        let integerFormat = {numberFormat: '#,##0; (#,##0); -'};
+        let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
+        let currencyFormatStyle = {numberFormat: '_-* # ##0.00\\ [$TND]_-;-* # ##0.00\\ [$TND]_-;_-* "-"??\\ [$TND]_-;_-@_-'};
         Object.keys(groupedByDate).forEach(date => {
             const dateGroup = groupedByDate[date];
             const groupedByProducer = _.groupBy(dateGroup, item => item.producerName);
@@ -795,8 +816,8 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
                     totalSum += sale.total || 0;
                     if (isFirstDateRow) {
                         ws.cell(rowIndex, 1, rowIndex + dateGroup.length - 1, 1, true)
-                            .string(sale.date || "Non spécifié")
-                            .style(rowStyle);
+                            .date(sale.date)
+                            .style(rowStyle).style(dateFormatStyle);
                         isFirstDateRow = false;
                     }
                     if (!filter.producer) {
@@ -807,29 +828,24 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
                     }
 
                     let colIndex = 2;
-                    if (!filter.producer) colIndex += 1;
+                    if (!filter.producer)
+                        colIndex++;
 
-                    ws.cell(rowIndex, colIndex).string(sale.totalProducerCommission.toLocaleString("fr-TN", {
-                        style: "decimal",
-                        minimumFractionDigits: 2
-                    }) || "0.00").style(rowStyleRight);
-                    ws.cell(rowIndex, colIndex + 1).string(sale.totalToPay.toLocaleString("fr-TN", {
-                        style: "decimal",
-                        minimumFractionDigits: 2
-                    }) || "0.00").style(rowStyleRight);
-                    ws.cell(rowIndex, colIndex + 2).string(sale.paymentInfo ? sale.paymentInfo.name : 'Non spécifié').style(rowStyle);
-                    ws.cell(rowIndex, colIndex + 3).string(sale.total.toLocaleString("fr-TN", {
-                        style: "decimal",
-                        minimumFractionDigits: 2
-                    }) || "0.00").style(rowStyleRight);
+                    ws.cell(rowIndex, colIndex).number(sale.receiptNumber).style(rowStyleRight);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).number(sale.total).style(rowStyleRight).style(numberFormat);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).number(sale.totalProducerCommission).style(rowStyleRight).style(numberFormat);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).number(sale.totalToPay).style(rowStyleRight).style(numberFormat);
                     rowIndex++;
                 });
             });
         });
 
-        let totalStartCol = 1;
-        let totalEndCol = 2;
-        if (filter.producer) totalEndCol -= 1;
+        let colIndex = 3;
+        if (filter.producer)
+            colIndex--;
         const totalStyle = wb.createStyle({
             font: {size: 10, bold: true},
             alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
@@ -840,7 +856,8 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
             alignment: {horizontal: 'right', vertical: 'center', wrapText: true},
             border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
         });
-        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
+        ws.cell(rowIndex, 1, rowIndex, colIndex, true).string('Total').style(totalStyle);
+        colIndex++;
         const totalData = [totalProducerCommissionSum.toLocaleString('fr-TN', {
             style: 'currency',
             currency: 'TND',
@@ -851,12 +868,11 @@ router.generateExcelSalesReport = async function (data, filter, res, username) {
             minimumFractionDigits: 2
         }), '', totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2})
         ];
-        totalData.forEach((value, colIndex) => {
-            ws.cell(rowIndex, totalEndCol + 1 + colIndex)
-                .string(value.toString())
-                .style(totalPriceStyle);
-        });
-
+        ws.cell(rowIndex, colIndex).number(totalSum).style(totalPriceStyle).style(numberFormat);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalProducerCommissionSum).style(totalPriceStyle).style(numberFormat);
+        colIndex++;
+        ws.cell(rowIndex, colIndex).number(totalToPaySum).style(totalPriceStyle).style(numberFormat);
         const fileName = "Production.xlsx";
         const excelFile = tools.Excel_PATH;
         if (!fs.existsSync(excelFile)) {

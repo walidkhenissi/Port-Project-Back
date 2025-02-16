@@ -5,6 +5,7 @@ const commissionBeneficiaryController = require("../controllers/commissionBenefi
 const Response = require("../utils/response");
 const {SalesTransaction, sequelize, CommissionValue} = require("../models");
 const _ = require("lodash");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -123,7 +124,10 @@ router.updateCommissionValuesBySaleTransaction = async function (saleTransaction
                     value: Number(parseFloat(comValue).toFixed(3)),
                     date: saleTransaction.date,
                     commissionId: commissionHistory.Commission.id,
-                    salesTransactionId: saleTransaction.id
+                    salesTransactionId: saleTransaction.id,
+                    saleNumber: saleTransaction.sale ? (saleTransaction.sale.number || '') : '',
+                    saleReceiptNumber: saleTransaction.sale.receiptNumber,
+                    sateTransactionQuittance: saleTransaction.quittance
                 });
                 commissionValues.push(commissionValue);
             }
@@ -175,7 +179,7 @@ router.post('/findWithDetails', async (req, res) => {
         const whereCriteria = _.clone(criteria.where);
         const data = await dao.find(criteria);
         const count = await dao.count({where: whereCriteria});
-        const sum = await dao.sum({where: {id:_.map(data, 'id')}});
+        const sum = await dao.sum({where: {id: _.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;

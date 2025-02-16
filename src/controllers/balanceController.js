@@ -1,9 +1,6 @@
 var router = require('express').Router();
 const dao = require("../dao/balanceDao");
-const {Op} = require('sequelize');
 const beneficiaryDao = require("../dao/beneficiaryDao");
-const saleDao = require("../dao/saleDao");
-const salePaymentDao = require("../dao/salePaymentDao");
 const commissionBeneficiaryController = require("../controllers/commissionBeneficiaryController");
 const Response = require("../utils/response");
 

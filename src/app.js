@@ -14,6 +14,8 @@ var ClusterStore = require('strong-cluster-connect-store')(session);
 tools = require('./utils/utils');
 sequelizeAdapter = require('./utils/sequelizeAdapter');
 moment = require("moment");
+// local = require('moment/locale/fr');
+// moment.locale('fr');
 _ = require('lodash');
 dbDateFormat = "YYYY-MM-DD";
 dbDateTimeFormat = "YYYY-MM-DD HH:mm:ss";
@@ -53,21 +55,21 @@ app.use(express.static('./files'));
 //Generic controller
 app.use('/generic', require('./controllers/GenericController'));
 
-// MySQL Connection
-const connection = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: 'port_application',
-    database: 'port_application',
-});
-
-connection.connect((err) => {
-    if (err) {
-        console.error('Error connecting to MySQL:', err);
-    } else {
-        console.log('Connected to MySQL');
-    }
-});
+// // MySQL Connection
+// const connection = mysql.createConnection({
+//     host: 'localhost',
+//     user: 'root',
+//     password: 'port_application',
+//     database: 'port_application',
+// });
+//
+// connection.connect((err) => {
+//     if (err) {
+//         console.error('Error connecting to MySQL:', err);
+//     } else {
+//         console.log('Connected to MySQL');
+//     }
+// });
 
 sequelize.sync({alter: true})
     .then(() => {

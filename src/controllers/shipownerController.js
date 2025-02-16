@@ -5,6 +5,7 @@ const boatDao = require("../dao/boatDao");
 const saleDao = require("../dao/saleDao");
 const balanceDao = require("../dao/balanceDao");
 const Response = require("../utils/response");
+moment.locale('fr');
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
