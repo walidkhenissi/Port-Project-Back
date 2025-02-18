@@ -1072,6 +1072,7 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
                         payment = paymentsDateGroup ? paymentsDateGroup[paymentRowIndex] : null;
                         balance = balance - transaction.totalToPayByMerchant;
                         paymentRowIndex++;
+
                         if (payment) {
                             totalMerchantPaymentSum += payment.value || 0;
                             balance = balance + payment.value;
@@ -1132,7 +1133,7 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
                                 }), fontSize: 8, alignment: 'right', margin: [0, 3]
                             },
                             {
-                                text: (payment ? payment.value.toLocaleString('fr-TN', {
+                                text: (payment ? payment.value?.toLocaleString('fr-TN', {
                                     style: 'decimal',
                                     minimumFractionDigits: 2
                                 }) : ''),
