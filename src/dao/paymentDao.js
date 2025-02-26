@@ -1,4 +1,4 @@
-const {sequelize, Payment, Article, Merchant, Sale, PaymentType, Bank, ConsumptionInfo} = require('../models');
+const {sequelize, Payment, Article, Merchant, Sale, PaymentType, Bank, ConsumptionInfo, SalePayment} = require('../models');
 
 module.exports = {
     list: async function (criteria) {
@@ -32,6 +32,36 @@ module.exports = {
                     model: ConsumptionInfo,
                     as: 'consumptionInfo'
                 }],
+                where: criteria.where,
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return payments;
+        } catch (error) {
+            console.error('Error retrieving payments :', error);
+            return error;
+        }
+    },
+    findAll: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const payments = await Payment.findAll({
+                include: [
+                    {model: PaymentType, as: 'paymentType'},
+                    {
+                        model: SalePayment,
+                        as: 'salePayments',
+                        include: [
+                            {
+                                model: Sale,
+                                as: 'sale'
+                            }
+
+
+                        ]
+                    }
+                ],
                 where: criteria.where,
                 limit: criteria.limit,
                 offset: criteria.skip,

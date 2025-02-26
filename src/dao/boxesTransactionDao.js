@@ -43,6 +43,24 @@ module.exports = {
             return error;
         }
     },
+    findAll: async function (criteria) {
+        try {
+            // console.log("=====================>criteria : " + JSON.stringify(criteria));
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            // console.log("=====================>criteria : " + JSON.stringify(criteria));
+            const boxesTransactions = await BoxesTransaction.findAll({
+                where: criteria.where,
+                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}],
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return boxesTransactions;
+        } catch (error) {
+            console.error('Error retrieving boxesTransaction :', error);
+            return error;
+        }
+    },
     get: async function (id) {
         try {
             const boxesTransaction = await BoxesTransaction.findByPk(id, {

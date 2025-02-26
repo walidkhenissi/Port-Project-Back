@@ -6,7 +6,7 @@ const paymentDao = require("../dao/paymentDao");
 const paymentController = require("./paymentController");
 const saleController = require("./saleController");
 const balanceController = require("./balanceController");
-const { Shipowner} = require("../models");
+const { Shipowner, Sale} = require("../models");
 const _ = require("lodash");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
@@ -404,7 +404,7 @@ router.getSalePaymentReportData = async function (options) {
         }
     }
     if (!tools.isFalsey(options.producer)) {
-        criteria.where['$sale.shipOwnerId$']= options.producer;
+        criteria.where['$sale.producerName$']= options.producer;
     }
 
     let salePayment = await dao.findAll(criteria);
@@ -418,9 +418,9 @@ router.generateReportTitleSalePayment = async function (filter, username) {
     let producerName = '';
 
     if (producer) {
-        const producerData = await Shipowner.findByPk(producer);;
+        const producerData =  await Sale.findOne({where: { producerName: producer }});
         if (producerData) {
-            title = `État de paiement du producteur : ${producerData.name.toUpperCase()}`;
+            title = `État de paiement du producteur : ${producerData.producerName.toUpperCase()}`;
             producerName = producerData.name;
         }
     }
@@ -463,14 +463,13 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
         {text: 'Type', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Numéro', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Echéance', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Signataire', fontSize:10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Vente', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Signataire', fontSize:10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
     ].filter(Boolean));
 
     const filteredData = data.filter(salePayment => {
         if (!filter.producer) return true;
 
-        return (!filter.producer || salePayment.sale.shipOwnerId === filter.producer);
+        return (!filter.producer || salePayment.sale.producerName === filter.producer);
     });
 
     filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -481,11 +480,7 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
     const groupedByProducer = _.groupBy(filteredData, item => item.sale.producerName);
     Object.keys(groupedByProducer).forEach(producer => {
         const producerGroup = groupedByProducer[producer];
-
-        const groupedByVente = _.groupBy(producerGroup, item => item.sale.totalToPay);
-        Object.keys(groupedByVente).forEach(sale => {
-            const venteGroup = groupedByVente[sale];
-            const groupedByDate = _.groupBy(venteGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            const groupedByDate = _.groupBy(producerGroup, item => moment(item.date).format('DD-MM-YYYY'));
             Object.keys(groupedByDate).forEach(date => {
               const dateGroup = groupedByDate[date];
 
@@ -529,14 +524,11 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
                         {text: salePayment.paymentType?.name, fontSize: 9, alignment: 'center', margin: [0, 3]},
                         {text: salePayment.payment.number || '', fontSize: 9, alignment: 'center', margin: [0, 3]},
                         {text: salePayment.payment.dueDate, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                        {text: salePayment.payment.signatory, fontSize: 9, alignment: 'center', margin: [0, 3]},
-                        {text: salePayment.sale.totalToPay.toLocaleString('fr-TN', {style: 'decimal',minimumFractionDigits: 2, maximumFractionDigits: 2}), rowSpan: venteGroup.length, fontSize: 9, alignment: 'right', margin: calculateMargin(venteGroup.length)}
-
+                        {text: salePayment.payment.signatory, fontSize: 9, alignment: 'center', margin: [0, 3]}
                     ].filter(Boolean);
                     salePaymentReportData.push(row);
                 });
             });
-        });
     });
 
     salePaymentReportData.push([{
@@ -544,10 +536,13 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
         fontSize: 10,
         alignment: 'center',
         bold: true,colSpan: 2 -  (filter.producer ? 1 : 0) , margin: [0, 3]},
-        ...(filter.producer ? [] : ['']),
-       {text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
-        '','','','',
-        {text: totalSaleSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]}
+        ...(filter.producer ? [] : ['-']),
+        {text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
+        {text: '-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+        {text: '-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+        {text: '-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+        {text: '-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+
 
     ]);
     let docDefinition = {
@@ -576,7 +571,7 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
                     table: {
                         headerRows: 1,
                         body: [...titleRow, ...salePaymentReportData],
-                        widths: [!filter.producer ? 80 : 0, 70,50,70, 50,'*','*', '*'].filter(Boolean),
+                        widths: [!filter.producer ? 80 : 0, 70,50,70, 50,'*','*',].filter(Boolean),
                     }
                 }],
             }
@@ -631,7 +626,7 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
-        const titleRow = [(!filter.producer ? 'Producteur' : ''), 'Date', 'Montant',  'Type', 'Numéro ', 'Echéance', 'Signataire','Vente'].filter(Boolean);
+        const titleRow = [(!filter.producer ? 'Producteur' : ''), 'Date', 'Montant',  'Type', 'Numéro ', 'Echéance', 'Signataire'].filter(Boolean);
 
         ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
@@ -691,7 +686,7 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
 
         let rowIndex = 6;
         const filteredData = data.filter(salePayment  => {
-            return (!filter.producer || salePayment.sale.shipOwnerId === filter.producer);
+            return (!filter.producer || salePayment.sale.producerName === filter.producer);
 
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -707,20 +702,13 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
         Object.keys(groupedByProducer).forEach(producer => {
             let isFirstProducerRow = true;
             const producerGroup = groupedByProducer[producer];
-            const groupedByVente = _.groupBy(producerGroup, item => item.sale.totalToPay);
-            Object.keys(groupedByVente).forEach(sale => {
-                const venteGroup = groupedByVente[sale];
-                const groupedByDate = _.groupBy(venteGroup, item => moment(item.date).format('DD-MM-YYYY'));
-                let isFirstVenteRow = true;
+                const groupedByDate = _.groupBy(producerGroup, item => moment(item.date).format('DD-MM-YYYY'));
                 Object.keys(groupedByDate).forEach(date => {
                     const dateGroup = groupedByDate[date];
-
                     let isFirstDateRow = true;
-
                     dateGroup.forEach((salePayment, index) => {
                         totalPriceSum += salePayment.value || 0;
                         const saleId = salePayment.sale.id;
-
                         if (!countedSales.has(saleId)) {
                             totalSaleSum += salePayment.sale.totalToPay;
                             countedSales.add(saleId);
@@ -760,17 +748,12 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
                         ws.cell(rowIndex, colIndex).string(salePayment.payment.signatory || '').style(rowStyle).style(integerFormat);
                         ws.column(colIndex).setWidth(9);
                         colIndex++;
-                        if (isFirstVenteRow){
-                            ws.cell(rowIndex, colIndex,rowIndex + venteGroup.length - 1, colIndex, true).number(salePayment.sale.totalToPay).style(rowStyleRight).style(numberFormat);
-                            ws.column(colIndex).setWidth(20);
-                            isFirstVenteRow=false;
 
-                        }
                        rowIndex++;
                     });
                 });
             });
-        });
+
 
         let totalStartCol = 1;
         let totalEndCol = 2;
@@ -784,9 +767,16 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
         ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
         totalEndCol++;
         ws.cell(rowIndex, totalEndCol).number(totalPriceSum).style(totalStyle).style(currencyFormatStyle);
-        totalEndCol+=5;
-        ws.cell(rowIndex, totalEndCol).number(totalSaleSum ).style(totalStyle).style(currencyFormatStyle);
         totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+
 
         const fileName = "etatSalePaiemnt.xlsx";
         const excelFile = tools.Excel_PATH;

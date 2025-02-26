@@ -6,7 +6,7 @@ const salePaymentDao = require("../dao/salePaymentDao");
 const balanceController = require("../controllers/balanceController");
 const cashTransactionController = require("../controllers/cashTransactionController");
 const Response = require("../utils/response");
-const {ConsumptionInfo, PaymentType, Merchant, CashAccount, Bank, Payment,} = require("../models");
+const {ConsumptionInfo, PaymentType, Merchant, CashAccount, Bank, Payment, Shipowner,SalePayment, Sale} = require("../models");
 const _ = require("lodash");
 const {Op} = require("sequelize");
 const PdfPrinter = require("pdfmake");
@@ -844,7 +844,436 @@ router.generateExcelPaymentReport = async function (data, filter, res, username)
 
 };
 
+router.post('/generateCommissionaireReport', async (req, res) => {
+    try {
+        const dataToReport = await router.getCommissionaireReportData(req.body);
+        const username = req.session.username;
+        if (req.body.excelType) {
+            await router.generateExcelCommissionaireReport(dataToReport, req.body, res, username);
+        } else if (req.body.pdfType) {
+            await router.generatePDFCommissionaireReport(dataToReport, req.body, res, username);
+        } else {
+            res.status(200).json({
+                message: 'Report data fetched successfully', data: dataToReport
+            });
+        }
+    } catch (error) {
+        console.error('Error generating Paiement report:', error);
+        res.status(500).json({error: 'Error generating report'});
+    }
+});
+router.getCommissionaireReportData = async function (options) {
+    let criteria = {where: {}};
+    if (!tools.isFalsey(options.dateRule)) {
+        let startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
+        let endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
+        switch (options.dateRule) {
+            case 'equals' : {
+                criteria.where.date = {'>=': startOfDay, '<=': endOfDay};
+                break;
+            }
+            case 'notEquals' : {
+                criteria.where.date = {'!': options.startDate};
+                break;
+            }
+            case 'lowerThan' : {
+                criteria.where.date = {'<=': endOfDay};
+                break;
+            }
+            case 'greaterThan' : {
+                criteria.where.date = {'>=': startOfDay};
+                break;
+            }
+            case 'between' : {
+                criteria.where.date = {'>=': startOfDay, '<=': new Date(options.endDate).setHours(23, 59, 59, 999)};
+                break;
+            }
+            case 'debut':
+            default:
+                break;
+        }
+    }
+    if (!tools.isFalsey(options.producer)) {
+        criteria.where['$salePayments.sale.producerName$']= options.producer;
+    }
+
+    criteria.where.isCommissionnaryPayment= true;
+    console.log('Critères de recherche :', criteria);
+    let comission = await dao.findAll(criteria);
+    return comission;
+
+}
+router.generateReportTitleCommissionaire = async function (filter, username) {
+    const {producer, startDate, endDate, dateRule} = filter;
+    let title = 'État de paiement des Commisionaires';
+    let period = '';
+    let producerName = '';
+
+    if (producer) {
+        const producerData = await Sale.findOne({where: { producerName: producer }});
+        if (producerData) {
+            title = `État de paiement du Commisionaire : ${producerData.producerName.toUpperCase()}`;
+            producerName = producerData.producerName;
+        }
+    }
+
+    switch (dateRule) {
+        case 'equals':
+            period = startDate ? `Le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date exacte non spécifiée';
+            break;
+        case 'notEquals':
+            period = startDate ? `Autre que : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date à exclure non spécifiée';
+            break;
+        case 'lowerThan':
+            period = startDate ? `Avant le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date limite non spécifiée';
+            break;
+        case 'greaterThan':
+            period = startDate ? `Après le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date de début non spécifiée';
+            break;
+        case 'between':
+            const formattedStart = startDate ? new Date(startDate).toLocaleDateString('fr-TN') : null;
+            const formattedEnd = endDate ? new Date(endDate).toLocaleDateString('fr-TN') : null;
+            period = formattedStart && formattedEnd ? `Du : ${formattedStart} Au ${formattedEnd}` : formattedStart ? `À partir de : ${formattedStart}` : formattedEnd ? `Jusqu'à : ${formattedEnd}` : 'Période non spécifiée';
+            break;
+        default:
+            period = '';
+    }
+
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\nPar : ${username || ""}`;
+
+    return {
+        title, period, generationDate,
+    };
+}
+router.generatePDFCommissionaireReport = async function (data, filter, res, username) {
+    const {title, period, generationDate} = await router.generateReportTitleCommissionaire(filter, username);
+    let titleRow = [];
+    titleRow.push([
+        {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Montant Total ', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Type', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        !filter.producer ?{text: 'Producteur', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}: null,
+        {text: ' N° de bon de vente', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Montant Payé', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
+
+    ].filter(Boolean));
+
+    const filteredData = data.filter(payment => {
+        if (!filter.producer) return true;
+        return payment?.salePayments?.some(salePayment => {
+            if (salePayment?.sale?.producerName) {
+            return salePayment.sale.producerName === filter.producer;
+        } else {
+            console.log("shipOwnerId non trouvé dans le paiement");
+            return false;
+        }
+    });
+    });
+
+    filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    let ReportData = [];
+    let totalSumPaye = 0;
+    let totalSum = 0;
+    const countedPayments = new Set();
+        const groupeByDate = _.groupBy(filteredData, item =>  moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(groupeByDate).forEach(date => {
+            const dateGroup = groupeByDate[date];
+            let isFirstDateRow = true;
+          const calculateMargin = (rowSpan, lineHeight = 2.5, fontSize = 9) => {
+              if (rowSpan == 1)
+                  return [0, 0, 0, 0];
+              const totalRowHeight = rowSpan * fontSize * lineHeight;
+              const cellHeight = fontSize;
+              const verticalMargin = (totalRowHeight - cellHeight) / 2;
+              return [0, verticalMargin, 0, verticalMargin];
+          };
+          let totalRows = dateGroup.reduce((acc, payment) => {return acc + (payment.salePayments?.length || 1);}, 0);
+          dateGroup.forEach((payment, index) => {
+             const salePayments =payment.salePayments && payment.salePayments.length > 0 ? payment.salePayments : [null];
+             salePayments.forEach((salePayment, saleIndex) => {
+              const sale = salePayment ? salePayment.sale : null;
+                 if (payment?.id && !countedPayments.has(payment.id)) {
+                     totalSum += Number(payment.value) || 0;
+                     countedPayments.add(payment.id);
+                 }
+                 totalSumPaye += Number(salePayment?.value) || 0;
+                   const row = [
+                       isFirstDateRow ?  {text: moment(payment.date).format('DD-MM-YYYY'),rowSpan: totalRows, fontSize: 9, alignment: 'center',margin: calculateMargin(totalRows)}:{},
+                       salePayments.length > 1 ? {text: payment?.value.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2})?? '0,00', fontSize: 9, alignment: 'right',  margin: calculateMargin(salePayments.length), rowSpan: salePayments.length}:{text: payment.value?.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2})?? '0,00', fontSize: 9, alignment: 'right', margin: [0, 3]},
+                       salePayments.length > 1 ? {text: payment.paymentType.name , fontSize: 9, alignment: 'center',  margin: calculateMargin(salePayments.length),rowSpan: salePayments.length} : {text: payment.paymentType.name , fontSize: 9, alignment: 'center', margin: [0, 3]},
+                       !filter.producer ?  {text: sale?.producerName ?? '-', fontSize: 9, alignment: 'center' , margin: [0, 3]} : null,
+                       {text: sale?.receiptNumber ?? '-', fontSize: 9, alignment: 'center', margin: [0, 3]},
+                       {text: salePayment ? salePayment?.value.toLocaleString('fr-TN', {style: 'decimal', minimumFractionDigits: 2, maximumFractionDigits: 2}):'0,00',fontSize: 9, alignment: 'right', margin: [0, 3]}
+                   ].filter(Boolean);
+                   ReportData.push(row);
+                   isFirstDateRow = false;
+               });
+
+       });
+
+   });
 
 
+   ReportData.push([{
+        text: 'Total',
+        fontSize: 10,
+        alignment: 'center',
+        bold: true , margin: [0, 3]},
+       {text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
+       {text:'-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+       ...(filter.producer ? [] : ['-']),
+         {text:'-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
+       {text: totalSumPaye.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
+
+   ]);
+    let docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [25, 25, 25, 25],
+        pageOrientation: 'portrait',
+        defaultStyle: {
+            fontSize: 10, columnGap: 20
+        },
+        content: [
+            {
+                text: title,
+                fontSize: 14,
+                alignment: 'center',
+                decoration: 'underline',
+                font: 'Roboto',
+                bold: true,
+                margin: [0, 20, 0, 10]
+            },
+            {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
+            {text: generationDate, fontSize: 10, alignment: 'right'},
+            '\n',
+
+            {
+                columns: [{
+                    table: {
+                        headerRows: 1,
+                        body: [...titleRow, ...ReportData],
+                        widths: [ !filter.producer? 80 :0 , 70, 80, 70, 70, '*'].filter(Boolean),
+                    }
+                }],
+            }
+        ],
+        footer: function (currentPage, pageCount) {
+            return {
+                columns: [
+                    {
+                        text: ` Page ${currentPage} / ${pageCount}`,
+                        alignment: 'right',
+                        margin: [0, 0, 40, 80],
+                        fontSize: 10
+                    }
+                ]
+            };
+        }
+    };
+
+// var PdfPrinter = require('pdfmake');
+    var fonts = {
+        Roboto: {
+            normal: './assets/fonts/roboto/Roboto-Regular.ttf',
+            bold: './assets/fonts/roboto/Roboto-Bold.ttf',
+            italics: './assets/fonts/roboto/Roboto-Italic.ttf',
+            bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+        }
+    };
+
+    var PdfPrinter = require('pdfmake/src/printer');
+    var printer = new PdfPrinter(fonts);
+    var fs = require('fs');
+    var options = {
+        // ...
+    };
+
+    fileName = "etatPaiementCommisionaire.pdf";
+    await tools.cleanTempDirectory(fs, path);
+    try {
+        var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+        pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
+            res.status(201).json(new Response(fileName, path));
+        });
+        pdfDoc.end();
+    } catch (err) {
+        console.log("=====================>err : " + JSON.stringify(err));
+        res.status(404).json(new Response(err, true));
+    }
+}
+
+router.generateExcelCommissionaireReport = async function (data, filter, res, username) {
+    try {
+        const {title, period, generationDate} = await router.generateReportTitleCommissionaire(filter, username);
+
+        let wb = new xl.Workbook();
+        let ws = wb.addWorksheet('Rapport');
+        const titleRow = ['Date', 'Montant Total',  'Type', (!filter.producer ? 'Producteur' : ''), 'N° de bon de vente', 'Montant Payé'].filter(Boolean);
+
+        ws.cell(1, 1, 1, titleRow.length, true)
+            .string(generationDate)
+            .style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+        ws.cell(2, 1, 2, titleRow.length, true)
+            .string(title)
+            .style({
+                font: {size: 12, bold: true, underline: true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+        ws.cell(3, 1, 3, titleRow.length, true)
+            .string(period)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
+        ws.row(1).setHeight(30);
+        ws.row(2).setHeight(40);
+        ws.cell(4, 1).string('');
+
+        const headerStyle = wb.createStyle({
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+        });
+        const tableWidth = 100;
+        const columnCount = titleRow.length;
+        const columnWidth = Math.floor(tableWidth / columnCount);
+        titleRow.forEach((title, index) => {
+            ws.cell(5, index + 1).string(title).style(headerStyle);
+            ws.column(index + 1).setWidth(columnWidth);
+        });
+        const rowStyle = wb.createStyle({
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            border: {
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
+            }
+        });
+        const rowStyleRight = wb.createStyle({
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
+            border: {
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
+            }
+        });
+
+        let rowIndex = 6;
+        const filteredData = data.filter(payment => {
+            if (!filter.producer) return true;
+            return payment?.salePayments?.some(salePayment => {
+                if (salePayment?.sale?.producerName) {
+                    return salePayment.sale.producerName === filter.producer;
+                }
+            });
+        });
+        filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
+        let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
+        let currencyFormatStyle = {numberFormat: '_-* # ##0.00\\ [$TND]_-;-* # ##0.00\\ [$TND]_-;_-* "-"??\\ [$TND]_-;_-@_-'};
+        let totalSumPaye = 0;
+        let totalSum = 0;
+        const countedPayments = new Set();
+        const groupeByDate = _.groupBy(filteredData, item =>  moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(groupeByDate).forEach(date => {
+            const dateGroup = groupeByDate[date];
+            let isFirstDateRow = true;
+            let totalRows = dateGroup.reduce((acc, payment) => {return acc + (payment.salePayments?.length || 1);}, 0);
+            dateGroup.forEach((payment, index) => {
+                const salePayments =payment.salePayments && payment.salePayments.length > 0 ? payment.salePayments : [null];
+                let firstRowIndex = rowIndex;
+                let totalSalePayments = salePayments.length;
+                salePayments.forEach((salePayment, saleIndex) => {
+                    const sale = salePayment ? salePayment.sale : null;
+                    if (payment?.id && !countedPayments.has(payment.id)) {
+                        totalSum += Number(payment.value) || 0;
+                        countedPayments.add(payment.id);
+                    }
+                    if (saleIndex === 0) {
+                        totalSumPaye += salePayments.reduce((sum, sp) => sum + (Number(sp?.value) || 0), 0);
+                    }
+                   if (isFirstDateRow) {
+                        ws.cell(firstRowIndex,1, firstRowIndex + totalRows- 1, 1, true)
+                            .date(payment.date).style(dateFormatStyle)
+                            .style(rowStyle);
+                        ws.column(1).setWidth(14);
+                      isFirstDateRow = false;
+                    }
+                    if (saleIndex === 0) {
+                        ws.cell(firstRowIndex, 2, firstRowIndex + totalSalePayments - 1, 2, true).number(payment?.value || 0).style(numberFormat).style(rowStyleRight);
+                        ws.cell(firstRowIndex, 3, firstRowIndex + totalSalePayments - 1, 3, true).string(payment.paymentType?.name || '-').style(rowStyle);
+
+                    }
+                    if (!filter.producer ) {
+                            ws.cell(rowIndex,4).string(sale?.producerName.toUpperCase()|| '-').style(rowStyle);
+                            ws.column(4).setWidth(20);
+                    }
+                    let colIndex = 4;
+                    if (!filter.producer)
+                        colIndex++;
+                    ws.cell(rowIndex, colIndex).string(sale?.receiptNumber || '-').style(rowStyle).style(numberFormat);
+                    ws.column(colIndex).setWidth(15);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).number(salePayment?.value || 0).style(rowStyleRight).style(numberFormat);
+                    ws.column(colIndex).setWidth(15);
+                    rowIndex++;
+                });
+            });
+        });
+
+        let totalStartCol = 1;
+        let totalEndCol = 1;
+
+        const totalStyle = wb.createStyle({
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
+        });
+        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalSum).style(totalStyle).style(currencyFormatStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+        if (!filter.producer) {
+            ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+            totalEndCol++;
+        }
+        ws.cell(rowIndex, totalEndCol).string('-').style(totalStyle);
+        totalEndCol++;
+
+        ws.cell(rowIndex, totalEndCol).number(totalSumPaye).style(totalStyle).style(currencyFormatStyle);
+        totalEndCol++;
+
+
+        const fileName = "etatPaiementCommisionaire.xlsx";
+        const excelFile = tools.Excel_PATH;
+        if (!fs.existsSync(excelFile)) {
+            fs.mkdirSync(excelFile, {recursive: true});
+        }
+        const filePath = path.join(excelFile, fileName);
+
+        wb.write(filePath, function (err, stats) {
+            if (err) {
+                console.error("Error generating Excel file:", err);
+                return res.status(500).send('Error generating Excel file');
+            }
+            res.status(201).json(new Response(fileName));
+            res.download(filePath);
+        });
+    } catch (err) {
+        console.error("Erreur lors de la génération du fichier Excel:", err);
+        res.status(500).json({success: false, message: err.message});
+    }
+
+};
 
 module.exports = router;
