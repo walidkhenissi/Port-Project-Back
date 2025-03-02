@@ -259,9 +259,9 @@ router.generatePDFShipOwnerReport = async function (data, filter, res, username)
     titleRow.push([
         !filter.producer ? {text: 'Armateur' , fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}: null,
         {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        {text: 'Caisses récupérées', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Caisses vendues', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
-        filter.producer ?{text: 'Solde', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}:null
+        {text: 'Caisses récupérées', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+       filter.producer ?{text: 'Solde', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}:null
     ].filter(Boolean));
 
     const filteredData = data.filter(boxes => {
@@ -273,6 +273,7 @@ router.generatePDFShipOwnerReport = async function (data, filter, res, username)
     let ReportData = [];
     let totalCreditSum = 0;
     let totalDebitSum = 0;
+    let totalBalanceSum = 0;
 
     const groupedByProducer = _.groupBy(filteredData, item => item.shipOwner?.name);
     Object.keys(groupedByProducer).forEach(producer => {
@@ -293,7 +294,8 @@ router.generatePDFShipOwnerReport = async function (data, filter, res, username)
             dateGroup.forEach((boxes, index) => {
 
                 totalCreditSum += boxes.credit;
-                totalDebitSum += boxes.debit
+                totalDebitSum += boxes.debit;
+                totalBalanceSum=totalDebitSum - totalCreditSum;
 
                 if (!boxes.shipOwner?.name) return;
                 const row = [
@@ -316,7 +318,7 @@ router.generatePDFShipOwnerReport = async function (data, filter, res, username)
         ...(filter.producer ? [] : ['']),
         {text: totalCreditSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
         {text: totalDebitSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
-      ...(!filter.producer ? [] : [''])
+      ...(!filter.producer ? [] : [{text: totalBalanceSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]}])
 
     ]);
     let docDefinition = {
@@ -345,7 +347,7 @@ router.generatePDFShipOwnerReport = async function (data, filter, res, username)
                     table: {
                         headerRows: 1,
                         body: [...titleRow, ...ReportData],
-                        widths: [!filter.producer ? 120 : 0, 90, 100,80, filter.producer ? 90 : 0].filter(Boolean),
+                        widths: [!filter.producer ? 120 : 0, 90, 100,100, filter.producer ? 90 : 0].filter(Boolean),
                     }
                 }],
             }
@@ -400,7 +402,7 @@ router.generateExcelShipOwnerReport = async function (data, filter, res, usernam
 
         let wb = new xl.Workbook();
         let ws = wb.addWorksheet('Rapport');
-        const titleRow = [(!filter.producer ? 'Client' : ''), 'Date', 'Caisses récupérées',  'Caisses vendues', (filter.producer ? 'Solde' : '')].filter(Boolean);
+        const titleRow = [(!filter.producer ? 'Client' : ''), 'Date','Caisses vendues', 'Caisses récupérées',  (filter.producer ? 'Solde' : '')].filter(Boolean);
 
         ws.cell(1, 1, 1, titleRow.length, true)
             .string(generationDate)
@@ -466,6 +468,7 @@ router.generateExcelShipOwnerReport = async function (data, filter, res, usernam
 
         let totalCreditSum = 0;
         let totalDebitSum = 0;
+        let totalBalanceSum = 0;
 
         const groupedByProducer = _.groupBy(filteredData, item => item.shipOwner?.name);
         Object.keys(groupedByProducer).forEach(producer => {
@@ -478,7 +481,8 @@ router.generateExcelShipOwnerReport = async function (data, filter, res, usernam
 
                 dateGroup.forEach((boxes, index) => {
                     totalCreditSum += boxes.credit;
-                    totalDebitSum += boxes.debit
+                    totalDebitSum += boxes.debit;
+                    totalBalanceSum=totalDebitSum - totalCreditSum;
                     if (!boxes.shipOwner?.name) return;
                     if (!filter.producer) {
                         if (isFirstProducerRow) {
@@ -530,7 +534,11 @@ router.generateExcelShipOwnerReport = async function (data, filter, res, usernam
         ws.cell(rowIndex, totalEndCol).number(totalCreditSum ).style(totalStyle);
         totalEndCol++;
         ws.cell(rowIndex, totalEndCol).number(totalDebitSum ).style(totalStyle);
-        totalEndCol++;
+
+        if (filter.producer) {
+            totalEndCol++;
+            ws.cell(rowIndex, totalEndCol).number(totalBalanceSum).style(totalStyle);
+        }
 
         const fileName = "etatBoxes.xlsx";
         const excelFile = tools.Excel_PATH;
@@ -638,6 +646,7 @@ router.generatePDFMerchantReport = async function (data, filter, res, username) 
     let totalCreditSum = 0;
     let totalDebitSum = 0;
     let totalMerchantSalesCredit =0;
+    let totalBalanceSum =0;
     const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
     Object.keys(groupedByMerchant).forEach(merchant => {
         const merchantGroup = groupedByMerchant[merchant];
@@ -658,6 +667,7 @@ router.generatePDFMerchantReport = async function (data, filter, res, username) 
                 totalCreditSum += boxes.credit;
                 totalDebitSum += boxes.debit
                 totalMerchantSalesCredit +=boxes.merchantSalesCredit;
+                totalBalanceSum = totalDebitSum- (totalCreditSum + totalMerchantSalesCredit);
                 if (!boxes.merchant?.name) return;
                 const row = [
                     !filter.merchant ? (isFirstRow ? {text: boxes.merchant?.name.toUpperCase(), rowSpan: merchantGroup.length, fontSize: 9, alignment: 'center', margin: calculateMargin(merchantGroup.length)} : null) : null,
@@ -681,7 +691,7 @@ router.generatePDFMerchantReport = async function (data, filter, res, username) 
         {text: totalDebitSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
         {text: totalCreditSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
         {text: totalMerchantSalesCredit, fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
-        ...(!filter.merchant ? [] : [''])
+        ...(!filter.merchant ? [] : [{text: totalBalanceSum , fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]}])
     ]);
     let docDefinition = {
         pageSize: 'A4',
@@ -823,6 +833,7 @@ router.generateExcelMerchantReport = async function (data, filter, res, username
         let totalCreditSum = 0;
         let totalDebitSum = 0;
         let totalMerchantSalesCredit =0;
+        let totalBalanceSum =0;
 
         const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
         Object.keys(groupedByMerchant).forEach(merchant => {
@@ -837,6 +848,7 @@ router.generateExcelMerchantReport = async function (data, filter, res, username
                     totalCreditSum += boxes.credit;
                     totalDebitSum += boxes.debit
                     totalMerchantSalesCredit +=boxes.merchantSalesCredit;
+                    totalBalanceSum = totalDebitSum- (totalCreditSum + totalMerchantSalesCredit);
                     if (!boxes.merchant?.name) return;
                     if (!filter.merchant) {
                         if (isFirstMerchantRow) {
@@ -892,9 +904,10 @@ router.generateExcelMerchantReport = async function (data, filter, res, username
         ws.cell(rowIndex, totalEndCol).number(totalCreditSum ).style(totalStyle);
         totalEndCol++;
         ws.cell(rowIndex, totalEndCol).number(totalMerchantSalesCredit).style(totalStyle);
-        totalEndCol++;
-
-
+        if (filter.merchant) {
+            totalEndCol++;
+            ws.cell(rowIndex, totalEndCol).number(totalBalanceSum).style(totalStyle);
+        }
 
         const fileName = "etatBoxesMerchant.xlsx";
         const excelFile = tools.Excel_PATH;

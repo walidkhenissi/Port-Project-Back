@@ -13,6 +13,7 @@ const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
 const xl = require("excel4node");
+const saleController = require("./saleController");
 moment.locale('fr');
 
 router.get('/list', async (req, res) => {
@@ -894,7 +895,12 @@ router.getCommissionaireReportData = async function (options) {
         }
     }
     if (!tools.isFalsey(options.producer)) {
-        criteria.where['$salePayments.sale.producerName$']= options.producer;
+        criteria.where = {
+            [Op.or]: [
+                { '$salePayments.sale.merchantId$': options.producer, '$salePayments.sale.shipOwnerId$': null },
+                { '$salePayments.sale.shipOwnerId$': options.producer, '$salePayments.sale.merchantId$': null }
+            ]
+        };
     }
 
     criteria.where.isCommissionnaryPayment= true;
@@ -910,10 +916,10 @@ router.generateReportTitleCommissionaire = async function (filter, username) {
     let producerName = '';
 
     if (producer) {
-        const producerData = await Sale.findOne({where: { producerName: producer }});
+        const producerData = await Sale.findOne({where: { [Op.or]: [{ merchantId: producer }, { shipOwnerId: producer }] }});
         if (producerData) {
-            title = `État de paiement du Commisionaire : ${producerData.producerName.toUpperCase()}`;
-            producerName = producerData.producerName;
+            producerName = await saleController.getProducerName(producerData);
+            title = `État de paiement du producteur : ${producerName.toUpperCase()}`;
         }
     }
 
@@ -961,13 +967,8 @@ router.generatePDFCommissionaireReport = async function (data, filter, res, user
     const filteredData = data.filter(payment => {
         if (!filter.producer) return true;
         return payment?.salePayments?.some(salePayment => {
-            if (salePayment?.sale?.producerName) {
-            return salePayment.sale.producerName === filter.producer;
-        } else {
-            console.log("shipOwnerId non trouvé dans le paiement");
-            return false;
-        }
-    });
+        return (!filter.producer || salePayment.sale.shipOwnerId || salePayment.sale.merchantId === filter.producer);
+        });
     });
 
     filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -1021,7 +1022,7 @@ router.generatePDFCommissionaireReport = async function (data, filter, res, user
         bold: true , margin: [0, 3]},
        {text: totalSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
        {text:'-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
-       ...(filter.producer ? [] : ['-']),
+       ...(filter.producer ? [] : [{ text: '-', alignment: 'center' }]),
          {text:'-', fontSize: 8, alignment: 'center', bold: true, margin: [0, 3]},
        {text: totalSumPaye.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]},
 
@@ -1052,7 +1053,7 @@ router.generatePDFCommissionaireReport = async function (data, filter, res, user
                     table: {
                         headerRows: 1,
                         body: [...titleRow, ...ReportData],
-                        widths: [ !filter.producer? 80 :0 , 70, 80, 70, 70, '*'].filter(Boolean),
+                        widths: [ !filter.producer? 80 :0 , 70, 80, 70, 90, '*'].filter(Boolean),
                     }
                 }],
             }
@@ -1170,10 +1171,8 @@ router.generateExcelCommissionaireReport = async function (data, filter, res, us
         const filteredData = data.filter(payment => {
             if (!filter.producer) return true;
             return payment?.salePayments?.some(salePayment => {
-                if (salePayment?.sale?.producerName) {
-                    return salePayment.sale.producerName === filter.producer;
-                }
-            });
+                    return (!filter.producer || salePayment.sale.shipOwnerId || salePayment.sale.merchantId === filter.producer);
+                });
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
         let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};

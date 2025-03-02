@@ -6,12 +6,14 @@ const paymentDao = require("../dao/paymentDao");
 const paymentController = require("./paymentController");
 const saleController = require("./saleController");
 const balanceController = require("./balanceController");
+const shipownerController=require("./shipownerController");
 const { Shipowner, Sale} = require("../models");
 const _ = require("lodash");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
 const xl = require("excel4node");
+const {Op} = require("sequelize");
 moment.locale('fr');
 
 router.get('/list', async (req, res) => {
@@ -404,12 +406,15 @@ router.getSalePaymentReportData = async function (options) {
         }
     }
     if (!tools.isFalsey(options.producer)) {
-        criteria.where['$sale.producerName$']= options.producer;
+        criteria.where = {
+            [Op.or]: [
+                { '$sale.merchantId$': options.producer, '$sale.shipOwnerId$': null },
+                { '$sale.shipOwnerId$': options.producer, '$sale.merchantId$': null }
+            ]
+        };
     }
-
     let salePayment = await dao.findAll(criteria);
     return salePayment;
-
 }
 router.generateReportTitleSalePayment = async function (filter, username) {
     const {producer, startDate, endDate, dateRule} = filter;
@@ -418,11 +423,12 @@ router.generateReportTitleSalePayment = async function (filter, username) {
     let producerName = '';
 
     if (producer) {
-        const producerData =  await Sale.findOne({where: { producerName: producer }});
-        if (producerData) {
-            title = `État de paiement du producteur : ${producerData.producerName.toUpperCase()}`;
-            producerName = producerData.name;
-        }
+            const sale = await Sale.findOne({where: { [Op.or]: [{ merchantId: producer }, { shipOwnerId: producer }] }});
+            if (sale) {
+                producerName = await saleController.getProducerName(sale);
+                title = `État de paiement du producteur : ${producerName.toUpperCase()}`;
+            }
+
     }
 
     switch (dateRule) {
@@ -469,7 +475,7 @@ router.generatePDFSalePaymentReport = async function (data, filter, res, usernam
     const filteredData = data.filter(salePayment => {
         if (!filter.producer) return true;
 
-        return (!filter.producer || salePayment.sale.producerName === filter.producer);
+        return (!filter.producer || salePayment.sale.shipOwnerId || salePayment.sale.merchantId === filter.producer);
     });
 
     filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -686,7 +692,7 @@ router.generateExcelSalePaymentReport = async function (data, filter, res, usern
 
         let rowIndex = 6;
         const filteredData = data.filter(salePayment  => {
-            return (!filter.producer || salePayment.sale.producerName === filter.producer);
+            return (!filter.producer || salePayment.sale.shipOwnerId || salePayment.sale.merchantId === filter.producer);
 
         });
         filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
