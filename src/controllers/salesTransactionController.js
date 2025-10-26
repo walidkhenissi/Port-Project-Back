@@ -4,11 +4,21 @@ const saleDao = require("../dao/saleDao");
 const salesTransactionPaymentDao = require("../dao/salesTransactionPaymentDao");
 const paymentDao = require("../dao/paymentDao");
 const balanceController = require("../controllers/balanceController");
+const cashTransactionController = require("../controllers/cashTransactionController");
 const boxesTransactionController = require("../controllers/boxesTransactionController");
 const saleController = require("../controllers/saleController");
 const commissionController = require("../controllers/commissionController");
 const Response = require("../utils/response");
-const {CommissionValue, Merchant, PaymentInfo, Article, Sale, SalesTransaction, Payment} = require("../models");
+const {
+    CommissionValue,
+    Merchant,
+    PaymentInfo,
+    Article,
+    Sale,
+    SalesTransaction,
+    Payment,
+    CashAccount
+} = require("../models");
 const fs = require("fs");
 const path = require("path");
 const xl = require('excel4node');
@@ -143,7 +153,7 @@ router.put('/update', async (req, res) => {
 
 router.update = async function (salesTransaction) {
     try {
-        // console.log("=====================>salesTransaction : " + JSON.stringify(salesTransaction));
+        // console.log("=====================>salesTransactionController.update");
         salesTransaction = await router.checkDataConstraints(salesTransaction);
         // console.log("=====================>salesTransaction : " + JSON.stringify(salesTransaction));
     } catch (e) {
@@ -164,7 +174,8 @@ router.update = async function (salesTransaction) {
     const sale = await saleDao.get(updated.saleId);
     let updatedSaleTransaction = await commissionController.updateCommissionsBySaleTransaction(salesTransaction.id);
     await balanceController.updateMerchantBalance(oldSaleTransaction.merchantId, sale.date);
-    if (oldSaleTransaction.merchantId != salesTransaction.merchantId) await balanceController.updateMerchantBalance(salesTransaction.merchantId, sale.date);
+    if (oldSaleTransaction.merchantId != salesTransaction.merchantId)
+        await balanceController.updateMerchantBalance(salesTransaction.merchantId, sale.date);
     await balanceController.updateBeneficiaryCommissionsBalance(sale.date);
     return updatedSaleTransaction;
 }
@@ -403,13 +414,13 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res, us
         {text: 'Sous Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Commission', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
         {text: 'Total', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}].filter(Boolean));
-    const filteredData = data.filter(transaction => {
+    let filteredData = data.filter(transaction => {
         if (!filter.merchant && !filter.article) return true;
 
         return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
             (!filter.article || transaction.article?.id === filter.article);
     });
-    filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
 
     let salesReportData = [];
     let totalPriceSum = 0;
@@ -418,10 +429,10 @@ router.generatePDFSalesTransactionReport = async function (data, filter, res, us
     let subTotalPriceSum = 0;
     let totalCommissionSum = 0;
 
-
+    filteredData = _.sortBy(filteredData, 'name');
     const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
     Object.keys(groupedByMerchant).forEach(merchant => {
-        const merchantGroup = groupedByMerchant[merchant];
+        const merchantGroup = _.sortBy(groupedByMerchant[merchant], 'date');
         const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
         Object.keys(groupedByDate).forEach(date => {
             const dateGroup = groupedByDate[date];
@@ -696,11 +707,11 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res, 
         });
 
         let rowIndex = 6;
-        const filteredData = data.filter(transaction => {
+        let filteredData = data.filter(transaction => {
             return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
                 (!filter.article || transaction.article?.id === filter.article);
         });
-        filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
         let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
         let integerFormat = {numberFormat: '#,##0; (#,##0); -'};
         let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
@@ -710,10 +721,11 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res, 
         let totalWeightSum = 0;
         let totalCommissionSum = 0;
         let totalPriceSum = 0;
+        filteredData = _.sortBy(filteredData, 'name');
         const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
         Object.keys(groupedByMerchant).forEach(merchant => {
             let isFirstMerchantRow = true;
-            const merchantGroup = groupedByMerchant[merchant];
+            const merchantGroup = _.sortBy(groupedByMerchant[merchant], 'date');
             const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
             Object.keys(groupedByDate).forEach(date => {
                 const dateGroup = groupedByDate[date];
@@ -725,6 +737,7 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res, 
                     let isFirstProducerRow = true;
                     Object.keys(groupedByArticle).forEach(article => {
                         const articleGroup = groupedByArticle[article];
+                        let isFirstArticleRow = true;
                         articleGroup.forEach((transaction, index) => {
                             totalQuantitySum += transaction.boxes || 0;
                             totalWeightSum += transaction.netWeight || 0;
@@ -750,10 +763,11 @@ router.generateExcelSalesTransactionReport = async function (data, filter, res, 
                                 ws.column(filter.merchant ? 2 : 3).setWidth(20);
                                 isFirstProducerRow = false;
                             }
-                            if (!filter.article) {
+                            if (!filter.article && isFirstArticleRow) {
                                 ws.cell(rowIndex, filter.merchant ? 3 : 4, rowIndex + articleGroup.length - 1, filter.merchant ? 3 : 4, true)
                                     .string(transaction.article?.name.toUpperCase() || "Non spécifié")
                                     .style(rowStyle);
+                                isFirstArticleRow = false;
                             }
                             let colIndex = 3;
                             if (!filter.merchant)
@@ -856,13 +870,15 @@ router.post('/generateAccountReport', async (req, res) => {
     }
 });
 router.getAccountReportData = async function (options) {
-    let criteria = {where: {}};
+    let criteria = {where: {}}, checkPreviousBalance = false;
+    // console.log("=====================>options : " + JSON.stringify(options));
     if (!tools.isFalsey(options.dateRule)) {
         let startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
         let endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
         switch (options.dateRule) {
             case 'equals' : {
                 criteria.where.date = {'>=': startOfDay, '<=': endOfDay};
+                checkPreviousBalance = true;
                 break;
             }
             case 'notEquals' : {
@@ -875,13 +891,16 @@ router.getAccountReportData = async function (options) {
             }
             case 'greaterThan' : {
                 criteria.where.date = {'>=': startOfDay};
+                checkPreviousBalance = true;
                 break;
             }
             case 'between' : {
                 criteria.where.date = {'>=': startOfDay, '<=': new Date(options.endDate).setHours(23, 59, 59, 999)};
+                checkPreviousBalance = true;
                 break;
             }
             case 'debut':
+            case 'readAll':
             default:
                 break;
         }
@@ -896,20 +915,36 @@ router.getAccountReportData = async function (options) {
     criteria = {where: cloned};
     criteria.where.isCommissionnaryPayment = false;
     let payments = await paymentDao.find(criteria);
-    let previousBalance = 0;
+    let previousBalance = 0, credit = 0;
     if (!tools.isFalsey(options.merchant)) {
-        let refDate = _.uniq(_.map(transasctions, 'date')).reduce(function (a, b) {
-            return a < b ? a : b;
-        });
-        refDate = new Date(refDate).setHours(0, 0, 0, 0);
-        let _criteria = {where: {date: {[Op.lt]: refDate}, merchantId: options.merchant}};
-        const salesSum = await SalesTransaction.sum('totalToPayByMerchant', _criteria);
-        previousBalance -= salesSum;
-        _criteria = {where: {date: {[Op.lt]: refDate}, merchantId: options.merchant, isCommissionnaryPayment: false}};
-        const paymentsSum = await Payment.sum('value', _criteria);
-        previousBalance += paymentsSum;
+        if (checkPreviousBalance) {
+            let refDate = new Date();
+            if (!tools.isFalsey(transasctions) && transasctions.length > 0)
+                refDate = _.uniq(_.map(transasctions, 'date')).reduce(function (a, b) {
+                    return a < b ? a : b;
+                });
+            refDate = new Date(refDate).setHours(0, 0, 0, 0);
+            let _criteria = {where: {date: {[Op.lt]: refDate}, merchantId: options.merchant}};
+            const salesSum = await SalesTransaction.sum('totalToPayByMerchant', _criteria);
+            previousBalance -= salesSum;
+            _criteria = {
+                where: {
+                    date: {[Op.lt]: refDate},
+                    merchantId: options.merchant,
+                    isCommissionnaryPayment: false
+                }
+            };
+            const paymentsSum = await Payment.sum('value', _criteria);
+            previousBalance += paymentsSum;
+        }
+        credit = await cashTransactionController.getCreditSold(options.merchant, true);
     }
-    return {transasctions: transasctions, payments: payments, previousBalance: previousBalance};
+    return {
+        transasctions: transasctions,
+        payments: payments,
+        previousBalance: previousBalance,
+        credit: credit
+    };
 
 }
 router.generateReportTitleAccount = async function (filter, username) {
@@ -1015,13 +1050,27 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
     ].filter(Boolean);
     titleRow.push(firstTitleRow);
     titleRow.push(secondTitleRow);
-    const filteredData = data.transasctions.filter(transaction => {
+    let filteredData = data.transasctions.filter(transaction => {
         if (!filter.merchant) return true;
 
         return (!filter.merchant || transaction.merchant?.id === filter.merchant);
     });
-    filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    let payments = data.payments;
+    const paymentsByDate = _.groupBy(payments, item => moment(item.date).format('DD-MM-YYYY'));
+    const dataByDate = _.groupBy(filteredData, item => moment(item.date).format('DD-MM-YYYY'));
+    Object.keys(paymentsByDate).forEach(date => {
+        if (!dataByDate[date]) {
+            for (const payment of paymentsByDate[date]) {
+                filteredData.push({
+                    date: payment.date,
+                    sale: {producerName: ''},
+                    merchant: payment.merchant
+                });
+            }
 
+        }
+    });
+    // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
     let salesReportData = [];
     let totalPriceSum = 0;
     let totalQuantitySum = 0;
@@ -1033,17 +1082,37 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
     let columnDateHeigth = 0, paymentRowIndex = 0;
     let previousBalance = data.previousBalance;
     let balance = previousBalance;
-    let payments = data.payments;
+    filteredData = _.sortBy(filteredData, function (item) {
+        return item.merchant ? item.merchant.name : '';
+    });
     const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
     const paymentsByMerchant = _.groupBy(payments, item => item.merchant?.name);
+    Object.keys(paymentsByMerchant).forEach(merchant => {
+        if (!groupedByMerchant[merchant]) {
+            groupedByMerchant[merchant] = [];
+        }
+    });
+    const calculateMargin = (rowSpan, lineHeight = 2, fontSize = 9) => {
+        const totalRowHeight = rowSpan * fontSize * lineHeight;
+        const cellHeight = fontSize;
+        const verticalMargin = (totalRowHeight - cellHeight) / 2;
+        return [0, verticalMargin, 0, verticalMargin];
+    };
     Object.keys(groupedByMerchant).forEach(merchant => {
         // let isFirstMerchantRow = true;
-        const merchantGroup = groupedByMerchant[merchant];
+        const merchantGroup = _.sortBy(groupedByMerchant[merchant], 'date');
         const merchantPaymentsGroup = paymentsByMerchant[merchant];
         const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
         const groupedPaymentsByDate = _.groupBy(merchantPaymentsGroup, item => moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(groupedPaymentsByDate).forEach(date => {
+            if (!groupedByDate[date]) {
+                groupedByDate[date] = [];
+            }
+        });
         Object.keys(groupedByDate).forEach(date => {
-            const dateGroup = groupedByDate[date];
+            const dateGroup = _.sortBy(groupedByDate[date], function (item) {
+                return item.sale ? item.sale.producerName : '';
+            });
             const paymentsDateGroup = groupedPaymentsByDate[date];
             columnDateHeigth = Math.max(dateGroup.length - 1), (paymentsDateGroup ? (paymentsDateGroup.length - 1) : 0);
             const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
@@ -1054,82 +1123,88 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
                 const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
                 // let isFirstProducerRow = true;
                 Object.keys(groupedByArticle).forEach(article => {
-                    const articleGroup = groupedByArticle[article];
+                    const articleGroup = _.sortBy(groupedByArticle[article], function (item) {
+                        return item.article ? item.article.name : '';
+                    });
                     let isFirstRow = true;
-                    const calculateMargin = (rowSpan, lineHeight = 2, fontSize = 9) => {
-                        const totalRowHeight = rowSpan * fontSize * lineHeight;
-                        const cellHeight = fontSize;
-                        const verticalMargin = (totalRowHeight - cellHeight) / 2;
-                        return [0, verticalMargin, 0, verticalMargin];
-                    };
                     articleGroup.forEach((transaction, index) => {
-                        totalQuantitySum += transaction.boxes;
-                        totalWeightSum += transaction.netWeight;
-                        totalPriceSum += transaction.totalPrice;
-                        totalmerchantCommissionSum += transaction.merchantCommission;
-                        totalToPayByMerchantSum += transaction.totalToPayByMerchant;
-                        totalRestMerchantPaymentSum += transaction.restMerchantPayment;
+                        totalQuantitySum += transaction.boxes ? transaction.boxes : 0;
+                        totalWeightSum += transaction.netWeight ? transaction.netWeight : 0;
+                        totalPriceSum += transaction.totalPrice ? transaction.totalPrice : 0;
+                        totalmerchantCommissionSum += transaction.merchantCommission ? transaction.merchantCommission : 0;
+                        totalToPayByMerchantSum += transaction.totalToPayByMerchant ? transaction.totalToPayByMerchant : 0;
+                        totalRestMerchantPaymentSum += transaction.restMerchantPayment ? transaction.restMerchantPayment : 0;
                         payment = paymentsDateGroup ? paymentsDateGroup[paymentRowIndex] : null;
-                        balance = balance - transaction.totalToPayByMerchant;
+                        balance -= transaction.totalToPayByMerchant ? transaction.totalToPayByMerchant : 0;
                         paymentRowIndex++;
                         if (payment) {
                             totalMerchantPaymentSum += payment.value || 0;
-                            balance = balance + payment.value;
+                            balance += payment.value;
                         }
                         const row = [
                             !filter.merchant ? (isFirstRow ? {
-                                text: transaction.merchant?.name.toUpperCase() || "Non spécifié",
+                                text: transaction ? (transaction.merchant?.name.toUpperCase() || "") : '',
                                 rowSpan: merchantGroup.length,
                                 fontSize: 8,
                                 alignment: 'center',
                                 margin: calculateMargin(merchantGroup.length)
                             } : null) : null,
                             isFirstRow ? {
-                                text: moment(transaction.date).format('DD-MM-YYYY'),
+                                text: transaction ? moment(transaction.date).format('DD-MM-YYYY') : moment(payment.date).format('DD-MM-YYYY'),
                                 rowSpan: dateGroup.length,
                                 fontSize: 8,
                                 alignment: 'center',
                                 margin: calculateMargin(dateGroup.length)
                             } : null,
                             isFirstRow ? {
-                                text: transaction.sale.producerName.toUpperCase(),
+                                text: transaction ? transaction.sale.producerName.toUpperCase() : '',
                                 rowSpan: producerGroup.length,
                                 fontSize: 8,
                                 alignment: 'center',
                                 margin: calculateMargin(producerGroup.length)
                             } : null,
                             isFirstRow ? {
-                                text: transaction.article?.name || "Non spécifié",
+                                text: transaction ? (transaction.article?.name || "") : '',
                                 rowSpan: articleGroup.length,
                                 fontSize: 8,
                                 alignment: 'center',
                                 margin: calculateMargin(articleGroup.length)
                             } : null,
-                            {text: transaction.boxes, fontSize: 8, alignment: 'center', margin: [0, 3]},
-                            {text: transaction.netWeight, fontSize: 8, alignment: 'center', margin: [0, 3]},
                             {
-                                text: transaction.unitPrice.toLocaleString('fr-TN', {
-                                    style: 'decimal',
-                                    minimumFractionDigits: 2
-                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                                text: transaction ? (transaction.boxes || '') : '',
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: [0, 3]
                             },
                             {
-                                text: transaction.totalPrice.toLocaleString('fr-TN', {
-                                    style: 'decimal',
-                                    minimumFractionDigits: 2
-                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                                text: transaction ? (transaction.netWeight || '') : '',
+                                fontSize: 8,
+                                alignment: 'center',
+                                margin: [0, 3]
                             },
                             {
-                                text: transaction.merchantCommission.toLocaleString('fr-TN', {
+                                text: (transaction && transaction.unitPrice) ? transaction.unitPrice.toLocaleString('fr-TN', {
                                     style: 'decimal',
                                     minimumFractionDigits: 2
-                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                                }) : '', fontSize: 8, alignment: 'right', margin: [0, 3]
                             },
                             {
-                                text: transaction.totalToPayByMerchant.toLocaleString('fr-TN', {
+                                text: (transaction && transaction.totalPrice) ? transaction.totalPrice.toLocaleString('fr-TN', {
                                     style: 'decimal',
                                     minimumFractionDigits: 2
-                                }), fontSize: 8, alignment: 'right', margin: [0, 3]
+                                }) : '', fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: (transaction && transaction.merchantCommission) ? transaction.merchantCommission.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }) : '', fontSize: 8, alignment: 'right', margin: [0, 3]
+                            },
+                            {
+                                text: (transaction && transaction.totalToPayByMerchant) ? transaction.totalToPayByMerchant.toLocaleString('fr-TN', {
+                                    style: 'decimal',
+                                    minimumFractionDigits: 2
+                                }) : '', fontSize: 8, alignment: 'right', margin: [0, 3]
                             },
                             {
                                 text: (payment ? payment.value.toLocaleString('fr-TN', {
@@ -1162,7 +1237,7 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
                     });
                 });
             });
-        });
+          });
     });
     salesReportData.push([{
         text: 'Total',
@@ -1214,11 +1289,13 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
             }), fontSize: 8, alignment: 'right', bold: true, margin: [0, 3]
         }])
     ]);
-    let startDate = filter.startDate || new Date();
-    let refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
-        return a < b ? a : b;
-    });
-    startDate = moment(refDate).isAfter(startDate) ? startDate : refDate;
+    // let startDate = filter.startDate || new Date();
+    let refDate = filter.startDate || new Date();
+    if (!tools.isFalsey(data.transasctions) && data.transasctions.length > 0)
+        refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
+            return a < b ? a : b;
+        });
+    // startDate = moment(refDate).isAfter(startDate) ? startDate : refDate;
     let docDefinition = {
         pageSize: 'A4',
         pageMargins: [25, 25, 25, 25],
@@ -1238,8 +1315,14 @@ router.generatePDFAccountReport = async function (data, filter, res, username) {
             },
             {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
             {text: generationDate, fontSize: 10, alignment: 'right'},
+            (filter.merchant && data.credit) ? {
+                text: 'Crédit : '.concat(data.credit.toLocaleString('fr-TN', {
+                    style: 'decimal',
+                    minimumFractionDigits: 2
+                })).concat(' ').concat('DT'), fontSize: 10, alignment: 'left', bold: true
+            } : null,
             filter.merchant ? {
-                text: `Solde avant le ${moment(startDate).format('DD-MM-YYYY')} = ${previousBalance.toLocaleString('fr-TN', {
+                text: `Solde ultérieur : ${previousBalance.toLocaleString('fr-TN', {
                     style: 'decimal',
                     minimumFractionDigits: 2
                 })} DT`, fontSize: 10, alignment: 'left', bold: true, margin: [0, 10]
@@ -1343,18 +1426,27 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
         ws.row(1).setHeight(30);
         ws.row(2).setHeight(30);
         let previousBalance = data.previousBalance;
+        let rowIndex = 4;
         if (filter.merchant) {
             let startDate = filter.startDate || new Date();
-            let refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
-                return a < b ? a : b;
-            });
+            let refDate = filter.startDate || new Date();
+            if (!tools.isFalsey(data.transasctions) && data.transasctions.length > 0)
+                refDate = _.uniq(_.map(data.transasctions, 'date')).reduce(function (a, b) {
+                    return a < b ? a : b;
+                });
             startDate = moment(refDate).isAfter(startDate) ? startDate : refDate;
             const previousBalanceStyle = wb.createStyle({
                 font: {size: 11, italic: true, bold: true},
                 alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
             });
-            ws.cell(4, 1, 4, 2, true).string('Solde avant le '.concat(moment(startDate).format('DD/MM/YYYY')).concat(' : ')).style(previousBalanceStyle);
-            ws.cell(4, 3, 4, 4, true).number(previousBalance).style(previousBalanceStyle).style(currencyFormatStyle);
+            if (!tools.isFalsey(data.credit) && data.credit != 0) {
+                ws.cell(rowIndex, 1, rowIndex, 1, true).string('Crédit').style(previousBalanceStyle);
+                ws.cell(rowIndex, 2, rowIndex, 3, true).number(data.credit).style(previousBalanceStyle).style(currencyFormatStyle);
+                rowIndex++;
+            }
+            ws.cell(rowIndex, 1, rowIndex, 2, true).string('Solde ultérieur : ').style(previousBalanceStyle);
+            ws.cell(rowIndex, 3, rowIndex, 4, true).number(previousBalance).style(previousBalanceStyle).style(currencyFormatStyle);
+            rowIndex++;
         }
         const headerStyle = wb.createStyle({
             font: {bold: true, size: 10},
@@ -1364,16 +1456,16 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
         });
         const achatsColSpan = 12 - (filter.merchant ? 1 : 0); // Ajuster si le champ "Client" est inclus
         const reglementsColSpan = 3;
-        ws.cell(5, 1, 5, achatsColSpan, true).string('Achats').style(headerStyle);
-        ws.cell(5, achatsColSpan + 1, 5, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
+        ws.cell(rowIndex, 1, rowIndex, achatsColSpan, true).string('Achats').style(headerStyle);
+        ws.cell(rowIndex, achatsColSpan + 1, rowIndex, achatsColSpan + reglementsColSpan, true).string('Règlements').style(headerStyle);
         if (filter.merchant)
-            ws.cell(5, achatsColSpan + reglementsColSpan + 1, 6, achatsColSpan + reglementsColSpan + 1, true).string('Solde').style(headerStyle);
-
+            ws.cell(rowIndex, achatsColSpan + reglementsColSpan + 1, rowIndex + 1, achatsColSpan + reglementsColSpan + 1, true).string('Solde').style(headerStyle);
+        rowIndex++;
         const tableWidth = 100;
         const columnCount = titleRow.length;
         const columnWidth = Math.floor(tableWidth / columnCount);
         titleRow.forEach((title, index) => {
-            ws.cell(6, index + 1).string(title).style(headerStyle);
+            ws.cell(rowIndex, index + 1).string(title).style(headerStyle);
             ws.column(index + 1).setWidth(columnWidth);
         });
         const rowStyle = wb.createStyle({
@@ -1397,12 +1489,26 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
             }
         });
 
-        let rowIndex = 7;
-        const filteredData = data.transasctions.filter(transaction => {
+        rowIndex++;
+        let filteredData = data.transasctions.filter(transaction => {
             return (!filter.merchant || transaction.merchant?.id === filter.merchant) &&
                 (!filter.article || transaction.article?.id === filter.article);
         });
-        filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        const paymentsByDate = _.groupBy(payments, item => moment(item.date).format('DD-MM-YYYY'));
+        const dataByDate = _.groupBy(filteredData, item => moment(item.date).format('DD-MM-YYYY'));
+        Object.keys(paymentsByDate).forEach(date => {
+            if (!dataByDate[date]) {
+                for (const payment of paymentsByDate[date]) {
+                    filteredData.push({
+                        date: payment.date,
+                        sale: {producerName: ''},
+                        merchant: payment.merchant
+                    });
+                }
+
+            }
+        });
+        // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
 
 
         let totalPriceSum = 0;
@@ -1413,16 +1519,31 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
         let totalMerchantPaymentSum = 0;
         let colIndex = 1, columnDateHeigth = 1, paymentRowIndex, payment;
         let balance = previousBalance;
-        const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
+        filteredData = _.sortBy(filteredData, function (item) {
+            return item.merchant ? item.merchant.name : '';
+        });        const groupedByMerchant = _.groupBy(filteredData, item => item.merchant?.name);
         const paymentsByMerchant = _.groupBy(payments, item => item.merchant?.name);
+        Object.keys(paymentsByMerchant).forEach(merchant => {
+            if (!groupedByMerchant[merchant]) {
+                groupedByMerchant[merchant] = [];
+            }
+        });
+        // let dataRows=[];
         Object.keys(groupedByMerchant).forEach(merchant => {
             let isFirstMerchantRow = true;
-            const merchantGroup = groupedByMerchant[merchant];
+            const merchantGroup = _.sortBy(groupedByMerchant[merchant], 'date');
             const merchantPaymentsGroup = paymentsByMerchant[merchant];
             const groupedByDate = _.groupBy(merchantGroup, item => moment(item.date).format('DD-MM-YYYY'));
             const groupedPaymentsByDate = _.groupBy(merchantPaymentsGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            Object.keys(groupedPaymentsByDate).forEach(date => {
+                if (!groupedByDate[date]) {
+                    groupedByDate[date] = [];
+                }
+            });
             Object.keys(groupedByDate).forEach(date => {
-                const dateGroup = groupedByDate[date];
+                const dateGroup = _.sortBy(groupedByDate[date], function (item) {
+                    return item.sale ? item.sale.producerName : '';
+                });
                 const paymentsDateGroup = groupedPaymentsByDate[date];
                 columnDateHeigth = Math.max(dateGroup.length - 1), (paymentsDateGroup ? (paymentsDateGroup.length - 1) : 0);
                 const groupedByProducer = _.groupBy(dateGroup, item => item.sale.producerName);
@@ -1433,8 +1554,10 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
                     const groupedByArticle = _.groupBy(producerGroup, item => item.article?.name);
                     let isFirstProducerRow = true;
                     Object.keys(groupedByArticle).forEach(article => {
-                        const articleGroup = groupedByArticle[article];
-
+                        const articleGroup = _.sortBy(groupedByArticle[article], function (item) {
+                            return item.article ? item.article.name : '';
+                        });
+                        let isFirstArticleRow = true, dataRow;
                         articleGroup.forEach((transaction, index) => {
                             totalQuantitySum += transaction.boxes || 0;
                             totalWeightSum += transaction.netWeight || 0;
@@ -1451,7 +1574,7 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
                             }
                             if (!filter.merchant) {
                                 if (isFirstMerchantRow) {
-                                    ws.cell(rowIndex, colIndex, rowIndex + merchantGroup.length - 1, colIndex, true).string(transaction.merchant?.name.toUpperCase() || "Non spécifié").style(rowStyle);
+                                    ws.cell(rowIndex, colIndex, rowIndex + merchantGroup.length - 1, colIndex, true).string(transaction.merchant?.name.toUpperCase() || "").style(rowStyle);
                                     ws.column(colIndex).setWidth(15);
                                     isFirstMerchantRow = false;
                                 }
@@ -1464,15 +1587,18 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
                             }
                             colIndex++;
                             if (isFirstProducerRow) {
-                                ws.cell(rowIndex, colIndex, rowIndex + producerGroup.length - 1, colIndex, true).string(transaction.sale.producerName.toUpperCase() || "Non spécifié").style(rowStyle);
+                                ws.cell(rowIndex, colIndex, rowIndex + producerGroup.length - 1, colIndex, true).string(transaction.sale.producerName.toUpperCase() || "").style(rowStyle);
                                 ws.column(colIndex).setWidth(15);
                                 isFirstProducerRow = false;
                             }
                             colIndex++;
-                            ws.cell(rowIndex, colIndex, rowIndex + articleGroup.length - 1, colIndex, true).string(transaction.article?.name.toUpperCase() || "Non spécifié").style(rowStyle);
-                            ws.column(colIndex).setWidth(9);
+                            if (isFirstArticleRow) {
+                                ws.cell(rowIndex, colIndex, rowIndex + articleGroup.length - 1, colIndex, true).string(transaction.article?.name.toUpperCase() || "").style(rowStyle);
+                                ws.column(colIndex).setWidth(9);
+                                isFirstArticleRow = false;
+                            }
                             colIndex++;
-                            ws.cell(rowIndex, colIndex).number(transaction.receiptNumber || 0).style(rowStyle);
+                            ws.cell(rowIndex, colIndex).string(transaction.receiptNumber?.toString() || '').style(rowStyle);
                             ws.column(colIndex).setWidth(12);
                             colIndex++;
                             ws.cell(rowIndex, colIndex).string(transaction.quittance || '').style(rowStyle);
@@ -1484,16 +1610,16 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
                             ws.cell(rowIndex, colIndex).number(transaction.netWeight || 0).style(rowStyle).style(numberFormat);
                             ws.column(colIndex).setWidth(12);
                             colIndex++;
-                            ws.cell(rowIndex, colIndex).number(transaction.unitPrice).style(numberFormat).style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex).number(transaction.unitPrice || 0).style(numberFormat).style(rowStyleRight);
                             ws.column(colIndex).setWidth(12);
                             colIndex++;
-                            ws.cell(rowIndex, colIndex).number(transaction.totalPrice).style(numberFormat).style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex).number(transaction.totalPrice || 0).style(numberFormat).style(rowStyleRight);
                             ws.column(colIndex).setWidth(15);
                             colIndex++;
-                            ws.cell(rowIndex, colIndex).number(transaction.merchantCommission).style(numberFormat).style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex).number(transaction.merchantCommission || 0).style(numberFormat).style(rowStyleRight);
                             ws.column(colIndex).setWidth(15);
                             colIndex++;
-                            ws.cell(rowIndex, colIndex).number(transaction.totalToPayByMerchant).style(numberFormat).style(rowStyleRight);
+                            ws.cell(rowIndex, colIndex).number(transaction.totalToPayByMerchant || 0).style(numberFormat).style(rowStyleRight);
                             ws.column(colIndex).setWidth(15);
                             colIndex++;
                             ws.cell(rowIndex, colIndex).number(payment ? payment.value : 0).style(numberFormat).style(rowStyleRight);
@@ -1510,6 +1636,7 @@ router.generateExcelAccountReport = async function (data, filter, res, username)
                                 ws.column(colIndex).setWidth(15);
                             }
                             rowIndex++;
+                            // dataRows.push(dataRow);
                         });
                     });
                 });

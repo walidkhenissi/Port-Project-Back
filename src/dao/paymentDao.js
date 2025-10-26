@@ -1,4 +1,15 @@
-const {sequelize, Payment, Article, Merchant, Sale, PaymentType, Bank, ConsumptionInfo} = require('../models');
+const {
+    sequelize,
+    Payment,
+    Article,
+    Merchant,
+    Sale,
+    PaymentType,
+    Bank,
+    ConsumptionInfo,
+    SalePayment,
+    Shipowner
+} = require('../models');
 
 module.exports = {
     list: async function (criteria) {
@@ -17,7 +28,9 @@ module.exports = {
     count: async function (criteria) {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
-            const count = await Payment.count({where: criteria.where});
+            const count = await Payment.count({where: criteria.where,
+                include: [
+                    {model: PaymentType, as: 'paymentType'}, {model: Shipowner, as: 'shipOwner'}]});
             return count;
         } catch (error) {
             console.error('Error counting payments :', error);
@@ -28,7 +41,10 @@ module.exports = {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
             const payments = await Payment.findAll({
-                include: [{model: Merchant, as: 'merchant'}, {model: PaymentType, as: 'paymentType'}, {
+                include: [{model: Merchant, as: 'merchant'}, {model: Shipowner, as: 'shipOwner'}, {
+                    model: PaymentType,
+                    as: 'paymentType'
+                }, {
                     model: ConsumptionInfo,
                     as: 'consumptionInfo'
                 }],
@@ -43,10 +59,47 @@ module.exports = {
             return error;
         }
     },
+    findAll: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const payments = await Payment.findAll({
+                include: [
+                    {model: PaymentType, as: 'paymentType'}, {model: Merchant, as: 'merchant'}, {
+                        model: Shipowner,
+                        as: 'shipOwner'
+                    },
+                    {
+                        model: SalePayment,
+                        as: 'salePayments',
+                        include: [
+                            {
+                                model: Sale,
+                                as: 'sale'
+                            }
+
+
+                        ]
+                    }
+                ],
+                where: criteria.where,
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return payments;
+        } catch (error) {
+            console.error('Error retrieving payments :', error);
+            return error;
+        }
+    },
     sum: async function (criteria) {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
-            const sum = await Payment.sum('value', {where: criteria.where});
+            const sum = await Payment.sum('value', {
+                where: criteria.where,
+                include: [
+                    {model: PaymentType, as: 'paymentType'}, {model: Shipowner, as: 'shipOwner'}]
+            });
             return sum;
         } catch (error) {
             console.error('Error sum payments :', error);

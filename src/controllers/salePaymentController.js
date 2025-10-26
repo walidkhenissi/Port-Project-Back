@@ -3,9 +3,17 @@ const dao = require("../dao/salePaymentDao");
 const saleDao = require("../dao/saleDao");
 const Response = require("../utils/response");
 const paymentDao = require("../dao/paymentDao");
+const shipOwnerDao = require("../dao/shipOwnerDao");
 const paymentController = require("./paymentController");
 const saleController = require("./saleController");
 const balanceController = require("./balanceController");
+const {Shipowner, Merchant, Sale, PaymentType} = require("../models");
+const _ = require("lodash");
+const PdfPrinter = require("pdfmake");
+const fs = require("fs");
+const path = require("path");
+const xl = require("excel4node");
+const {Op} = require("sequelize");
 moment.locale('fr');
 
 router.get('/list', async (req, res) => {
@@ -42,10 +50,12 @@ router.post('/findWithDetails', async (req, res) => {
         const whereCriteria = _.clone(criteria.where);
         const data = await dao.findWithDetails(criteria);
         const count = await dao.count({where: whereCriteria});
+        const sum = await dao.sum({where: {id: _.map(data, 'id')}});
         // console.log("=====================>data : " + JSON.stringify(data));
         const response = new Response();
         response.data = data;
         response.metaData.count = count;
+        response.metaData.sum = sum;
         res.status(200).json(response);
     } catch (error) {
         console.error('Error retrieving salePayment :', error);
@@ -347,5 +357,496 @@ router.delete('/remove', async (req, res) => {
         res.status(500).json(new Response({error: 'Internal Server Error'}, true));
     }
 });
+
+router.post('/generateSalePaymentReport', async (req, res) => {
+    try {
+        const dataToReport = await router.getSalePaymentReportData(req.body);
+        const username = req.session.username;
+        if (req.body.excelType) {
+            await router.generateExcelSalePaymentReport(dataToReport, req.body, res, username);
+        } else if (req.body.pdfType) {
+            await router.generatePDFSalePaymentReport(dataToReport, req.body, res, username);
+        } else {
+            res.status(200).json({
+                message: 'Report data fetched successfully', data: dataToReport
+            });
+        }
+    } catch (error) {
+        console.error('Error generating Paiement report:', error);
+        res.status(500).json({error: 'Error generating report'});
+    }
+});
+router.getSalePaymentReportData = async function (options) {
+    // console.log("=====================>options : " + JSON.stringify(options));
+    let criteria = {where: {}};
+    if (!tools.isFalsey(options.dateRule)) {
+        let startOfDay = new Date(options.startDate).setHours(0, 0, 0, 0);
+        let endOfDay = new Date(options.startDate).setHours(23, 59, 59, 999);
+        switch (options.dateRule) {
+            case 'equals' : {
+                criteria.where.date = {'>=': startOfDay, '<=': endOfDay};
+                break;
+            }
+            case 'notEquals' : {
+                criteria.where.date = {'!': options.startDate};
+                break;
+            }
+            case 'lowerThan' : {
+                criteria.where.date = {'<=': endOfDay};
+                break;
+            }
+            case 'greaterThan' : {
+                criteria.where.date = {'>=': startOfDay};
+                break;
+            }
+            case 'between' : {
+                criteria.where.date = {'>=': startOfDay, '<=': new Date(options.endDate).setHours(23, 59, 59, 999)};
+                break;
+            }
+            case 'debut':
+            default:
+                break;
+        }
+    }
+    let isMerchant = options.isMerchant;
+    let isShipOwner = options.isShipOwner;
+    if (!tools.isFalsey(options.producer)) {
+        let producer;
+        if (isMerchant)
+            producer = await Merchant.findByPk(options.producer.id ? options.producer.id : options.producer);
+        else if (isShipOwner)
+            producer = await Shipowner.findByPk(options.producer.id ? options.producer.id : options.producer);
+        if (!producer)
+            throw new Error('Internal error! Not found producer!');
+        else {
+            if (isMerchant)
+                criteria.where['$sale.merchantId$'] = producer.id;
+            else
+                criteria.where['$sale.shipOwnerId$'] = producer.id;
+        }
+    }
+    criteria.where['$paymentType.byAddress$'] = false;
+    let salePayments = await dao.findAll(criteria);
+    criteria = {where: {isCommissionnaryPayment: true}};
+    if (isMerchant)
+        criteria.where.merchantId = options.producer.id ? options.producer.id : options.producer;
+    else if (isShipOwner)
+        criteria.where.shipOwnerId = options.producer.id ? options.producer.id : options.producer;
+    criteria.where['$paymentType.byAddress$'] = true;
+    let byAddressPayments = await paymentDao.find(criteria);
+    let data = [];
+    if (salePayments && salePayments.length)
+        for (const salePayment of salePayments) {
+            data.push({
+                producerName: salePayment.sale ? salePayment.sale.producerName : '',
+                date: salePayment.payment ? salePayment.payment.date : salePayment.date,
+                value: salePayment.value,
+                paymentType: salePayment.paymentType,
+                payment: salePayment.payment
+            });
+        }
+    if (byAddressPayments && byAddressPayments.length)
+        for (const payment of byAddressPayments) {
+            data.push({
+                producerName: payment.merchant ? payment.merchant.name : (payment.shipOwner ? payment.shipOwner.name : ''),
+                date: payment.date,
+                value: payment.value,
+                paymentType: payment.paymentType,
+                payment: payment
+            });
+        }
+    data = _.sortBy(data, 'date');
+    return data;
+
+}
+router.generateReportTitleSalePayment = async function (filter, username) {
+    const {producer, startDate, endDate, dateRule} = filter;
+    let title = 'État des règlements des Producteurs';
+    let period = '';
+    let producerName = '';
+
+    if (producer) {
+        const producerData = await Shipowner.findByPk(producer);
+        ;
+        if (producerData) {
+            title = `État des règlements du producteur : ${producerData.name.toUpperCase()}`;
+            producerName = producerData.name;
+        }
+    }
+
+    switch (dateRule) {
+        case 'equals':
+            period = startDate ? `Le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date exacte non spécifiée';
+            break;
+        case 'notEquals':
+            period = startDate ? `Autre que : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date à exclure non spécifiée';
+            break;
+        case 'lowerThan':
+            period = startDate ? `Avant le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date limite non spécifiée';
+            break;
+        case 'greaterThan':
+            period = startDate ? `Après le : ${new Date(startDate).toLocaleDateString('fr-TN')}` : 'Date de début non spécifiée';
+            break;
+        case 'between':
+            const formattedStart = startDate ? new Date(startDate).toLocaleDateString('fr-TN') : null;
+            const formattedEnd = endDate ? new Date(endDate).toLocaleDateString('fr-TN') : null;
+            period = formattedStart && formattedEnd ? `Du : ${formattedStart} Au ${formattedEnd}` : formattedStart ? `À partir de : ${formattedStart}` : formattedEnd ? `Jusqu'à : ${formattedEnd}` : 'Période non spécifiée';
+            break;
+        default:
+            period = '';
+    }
+
+    const generationDate = `Édité le : ${new Date().toLocaleDateString('fr-FR')} à ${new Date().toLocaleTimeString('fr-FR')}\nPar : ${username || ""}`;
+
+    return {
+        title, period, generationDate,
+    };
+}
+router.generatePDFSalePaymentReport = async function (data, filter, res, username) {
+    const {title, period, generationDate} = await router.generateReportTitleSalePayment(filter, username);
+    let titleRow = [];
+    titleRow.push([
+        !filter.producer ? {
+            text: 'Producteur',
+            fontSize: 10,
+            alignment: 'center',
+            bold: true,
+            fillColor: '#E8EDF0'
+        } : null,
+        {text: 'Date', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Montant', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Type', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Numéro', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Echéance', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'},
+        {text: 'Signataire', fontSize: 10, alignment: 'center', bold: true, fillColor: '#E8EDF0'}
+    ].filter(Boolean));
+    // let filteredData = data.filter(salePayment => {
+    //     if (!filter.producer) return true;
+    //
+    //     return (!filter.producer || salePayment.sale.shipOwnerId === filter.producer);
+    // });
+    // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+    // if (!filter.producer)
+    //     filteredData = _.sortBy(filteredData, function (item) {
+    //         return item.sale.producerName ? item.sale.producerName : '';
+    //     });
+    let salePaymentReportData = [];
+    let totalPriceSum = 0;
+    let totalSaleSum = 0;
+    // const countedSales = new Set();
+    const groupedByProducer = _.groupBy(data, 'producerName');
+    Object.keys(groupedByProducer).forEach(producer => {
+        const producerGroup = groupedByProducer[producer];
+        // const groupedByVente = _.groupBy(producerGroup, item => item.sale.totalToPay);
+        // Object.keys(groupedByVente).forEach(sale => {
+        //     const venteGroup = groupedByVente[sale];
+            const groupedByDate = _.groupBy(producerGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            Object.keys(groupedByDate).forEach(date => {
+                const dateGroup = groupedByDate[date];
+                let isFirstRow = true;
+                const calculateMargin = (rowSpan, lineHeight = 2.5, fontSize = 9) => {
+                    if (rowSpan == 1)
+                        return [0, 0, 0, 0];
+                    const totalRowHeight = rowSpan * fontSize * lineHeight;
+                    const cellHeight = fontSize;
+                    const verticalMargin = (totalRowHeight - cellHeight) / 2;
+                    return [0, verticalMargin, 0, verticalMargin];
+                };
+                dateGroup.forEach((item, index) => {
+                    totalPriceSum += item.value;
+                    if (!item.producerName) return;
+                    const row = [
+                        !filter.producer ? (isFirstRow ? {
+                            text: item.producerName.toUpperCase(),
+                            rowSpan: producerGroup.length,
+                            fontSize: 9,
+                            alignment: 'center',
+                            margin: calculateMargin(producerGroup.length)
+                        } : null) : null,
+
+                        isFirstRow ? {
+                            text: moment(item.date).format('DD-MM-YYYY'),
+                            rowSpan: dateGroup.length,
+                            fontSize: 9,
+                            alignment: 'center',
+                            margin: calculateMargin(dateGroup.length)
+                        } : null,
+                        {
+                            text: item.value.toLocaleString('fr-TN', {
+                                style: 'decimal',
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2
+                            }), fontSize: 9, alignment: 'right', margin: [0, 3]
+                        },
+                        {text: item.paymentType?.name, fontSize: 9, alignment: 'center', margin: [0, 3]},
+                        {text: item.payment.number || '', fontSize: 9, alignment: 'center', margin: [0, 3]},
+                        {text: item.payment.dueDate, fontSize: 9, alignment: 'center', margin: [0, 3]},
+                        {text: item.payment.signatory, fontSize: 9, alignment: 'center', margin: [0, 3]}
+                    ].filter(Boolean);
+                    salePaymentReportData.push(row);
+                });
+            // });
+        });
+    });
+    salePaymentReportData.push([{
+        text: 'Total',
+        fontSize: 10,
+        alignment: 'center',
+        bold: true, colSpan: 2 - (filter.producer ? 1 : 0), margin: [0, 3]
+    },
+        ...(filter.producer ? [] : ['']),
+        {
+            text: totalPriceSum.toLocaleString('fr-TN', {style: 'currency', currency: 'TND', minimumFractionDigits: 2}),
+            fontSize: 10,
+            alignment: 'right',
+            bold: true,
+            margin: [0, 3]
+        },
+        '', '', '', ''
+    ]);
+    let docDefinition = {
+        pageSize: 'A4',
+        pageMargins: [25, 25, 25, 25],
+        pageOrientation: 'portrait',
+        defaultStyle: {
+            fontSize: 10, columnGap: 20
+        },
+        content: [
+            {
+                text: title,
+                fontSize: 14,
+                alignment: 'center',
+                decoration: 'underline',
+                font: 'Roboto',
+                bold: true,
+                margin: [0, 20, 0, 10]
+            },
+            {text: period, fontSize: 14, alignment: 'center', margin: [0, 6]},
+            {text: generationDate, fontSize: 10, alignment: 'right'},
+            '\n',
+
+            {
+                columns: [{
+                    table: {
+                        headerRows: 1,
+                        body: [...titleRow, ...salePaymentReportData],
+                        widths: [!filter.producer ? '*' : 0, 50, 70, 60, 50, 50, '*'].filter(Boolean),
+                    }
+                }],
+            }
+        ],
+        footer: function (currentPage, pageCount) {
+            return {
+                columns: [
+                    {
+                        text: ` Page ${currentPage} / ${pageCount}`,
+                        alignment: 'right',
+                        margin: [0, 0, 40, 80],
+                        fontSize: 10
+                    }
+                ]
+            };
+        }
+    };
+
+// var PdfPrinter = require('pdfmake');
+    var fonts = {
+        Roboto: {
+            normal: './assets/fonts/roboto/Roboto-Regular.ttf',
+            bold: './assets/fonts/roboto/Roboto-Bold.ttf',
+            italics: './assets/fonts/roboto/Roboto-Italic.ttf',
+            bolditalics: './assets/fonts/roboto/Roboto-BoldItalic.ttf'
+        }
+    };
+
+    var PdfPrinter = require('pdfmake/src/printer');
+    var printer = new PdfPrinter(fonts);
+    var fs = require('fs');
+    var options = {
+        // ...
+    };
+
+    fileName = "etatPaiement.pdf";
+    await tools.cleanTempDirectory(fs, path);
+    try {
+        var pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+        pdfDoc.pipe(fs.createWriteStream(tools.PDF_PATH + fileName)).on('finish', function () {
+            res.status(201).json(new Response(fileName, path));
+        });
+        pdfDoc.end();
+    } catch (err) {
+        console.log("=====================>err : " + JSON.stringify(err));
+        res.status(404).json(new Response(err, true));
+    }
+}
+router.generateExcelSalePaymentReport = async function (data, filter, res, username) {
+    try {
+        const {title, period, generationDate} = await router.generateReportTitleSalePayment(filter, username);
+
+        let wb = new xl.Workbook();
+        let ws = wb.addWorksheet('Rapport');
+        const titleRow = [(!filter.producer ? 'Producteur' : ''), 'Date', 'Montant', 'Type', 'Numéro ', 'Echéance', 'Signataire'].filter(Boolean);
+
+        ws.cell(1, 1, 1, titleRow.length, true)
+            .string(generationDate)
+            .style({
+                font: {name: 'Arial', italic: true, size: 10},
+                alignment: {horizontal: 'right', vertical: 'center'}
+            });
+        ws.cell(2, 1, 2, titleRow.length, true)
+            .string(title)
+            .style({
+                font: {size: 12, bold: true, underline: true},
+                alignment: {horizontal: 'center', vertical: 'center'}
+            });
+        ws.cell(3, 1, 3, titleRow.length, true)
+            .string(period)
+            .style({
+                font: {size: 12, italic: true},
+                alignment: {horizontal: 'center', vertical: 'center', wrapText: true}
+            });
+        ws.row(1).setHeight(30);
+        ws.row(2).setHeight(40);
+        ws.cell(4, 1).string('');
+
+        const headerStyle = wb.createStyle({
+            font: {bold: true, size: 10},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            fill: {type: 'pattern', patternType: 'solid', fgColor: '#E8EDF0'},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'},}
+        });
+        const tableWidth = 100;
+        const columnCount = titleRow.length;
+        const columnWidth = Math.floor(tableWidth / columnCount);
+        titleRow.forEach((title, index) => {
+            ws.cell(5, index + 1).string(title).style(headerStyle);
+            ws.column(index + 1).setWidth(columnWidth);
+        });
+        const rowStyle = wb.createStyle({
+            font: {size: 9},
+            alignment: {horizontal: 'center', vertical: 'center'},
+            border: {
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
+            }
+        });
+        const rowStyleRight = wb.createStyle({
+            font: {size: 9},
+            alignment: {horizontal: 'right', vertical: 'center'},
+            border: {
+                left: {style: 'thin', color: '#000000'},
+                right: {style: 'thin', color: '#000000'},
+                top: {style: 'thin', color: '#000000'},
+                bottom: {style: 'thin', color: '#000000'}
+            }
+        });
+
+        let rowIndex = 6;
+        // let filteredData = data.filter(salePayment => {
+        //     return (!filter.producer || salePayment.sale.shipOwnerId === filter.producer);
+        //
+        // });
+        // filteredData.sort((a, b) => new Date(a.date) - new Date(b.date));
+        if (!filter.producer)
+            data = _.sortBy(data, 'producerName');
+        let numberFormat = {numberFormat: '#,##0.00; (#,##0.00); -'};
+        let integerFormat = {numberFormat: '#,##0; (#,##0); -'};
+        let dateFormatStyle = {numberFormat: 'dd/mm/yyyy'};
+        let currencyFormatStyle = {numberFormat: '_-* # ##0.00\\ [$TND]_-;-* # ##0.00\\ [$TND]_-;_-* "-"??\\ [$TND]_-;_-@_-'};
+
+        let totalPriceSum = 0;
+        const groupedByProducer = _.groupBy(data, 'producerName');
+        Object.keys(groupedByProducer).forEach(producer => {
+            let isFirstProducerRow = true;
+            const producerGroup = groupedByProducer[producer];
+            const groupedByDate = _.groupBy(producerGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            // Object.keys(producerGroup).forEach(sale => {
+            //     const venteGroup = producerGroup[sale];
+            //     const groupedByDate = _.groupBy(venteGroup, item => moment(item.date).format('DD-MM-YYYY'));
+            Object.keys(groupedByDate).forEach(date => {
+                const dateGroup = groupedByDate[date];
+                let isFirstDateRow = true;
+                dateGroup.forEach((item, index) => {
+                    totalPriceSum += item.value || 0;
+
+                    if (!item.producerName) return;
+                    if (!filter.producer) {
+                        if (isFirstProducerRow) {
+                            ws.cell(rowIndex, 1, rowIndex + producerGroup.length - 1, 1, true)
+                                .string(item.producerName.toUpperCase()).style(rowStyle);
+                            ws.column(1).setWidth(15);
+                            isFirstProducerRow = false;
+                        }
+                    }
+                    if (isFirstDateRow) {
+                        ws.cell(rowIndex, filter.producer ? 1 : 2, rowIndex + dateGroup.length - 1, filter.producer ? 1 : 2, true)
+                            .date(item.date).style(dateFormatStyle)
+                            .style(rowStyle);
+                        ws.column(filter.producer ? 1 : 2).setWidth(8);
+                        isFirstDateRow = false;
+                    }
+                    let colIndex = 2;
+                    if (!filter.producer)
+                        colIndex++;
+                    ws.cell(rowIndex, colIndex).number(item.value).style(rowStyleRight).style(numberFormat);
+                    ws.column(colIndex).setWidth(15);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).string(item.paymentType?.name || '').style(rowStyle).style(integerFormat);
+                    ws.column(colIndex).setWidth(10);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).string(item.payment.number || 0).style(rowStyle).style(integerFormat);
+                    ws.column(colIndex).setWidth(7);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).string(item.payment.dueDate || '').style(rowStyle).style(dateFormatStyle);
+                    ws.column(colIndex).setWidth(10);
+                    colIndex++;
+                    ws.cell(rowIndex, colIndex).string(item.payment.signatory || '').style(rowStyle).style(integerFormat);
+                    ws.column(colIndex).setWidth(9);
+                    colIndex++;
+                    rowIndex++;
+                });
+            });
+            // });
+        });
+
+        let totalStartCol = 1;
+        let totalEndCol = 2;
+        if (filter.producer) totalEndCol -= 1;
+
+        const totalStyle = wb.createStyle({
+            font: {size: 10, bold: true},
+            alignment: {horizontal: 'center', vertical: 'center', wrapText: true},
+            border: {top: {style: 'thin'}, left: {style: 'thin'}, bottom: {style: 'thin'}, right: {style: 'thin'}}
+        });
+        ws.cell(rowIndex, totalStartCol, rowIndex, totalEndCol, true).string('Total').style(totalStyle);
+        totalEndCol++;
+        ws.cell(rowIndex, totalEndCol).number(totalPriceSum).style(totalStyle).style(currencyFormatStyle);
+        // totalEndCol+=5;
+        // ws.cell(rowIndex, totalEndCol).number(totalSaleSum ).style(totalStyle).style(currencyFormatStyle);
+        // totalEndCol++;
+
+        const fileName = "etatSalePaiemnt.xlsx";
+        const excelFile = tools.Excel_PATH;
+        if (!fs.existsSync(excelFile)) {
+            fs.mkdirSync(excelFile, {recursive: true});
+        }
+        const filePath = path.join(excelFile, fileName);
+
+        wb.write(filePath, function (err, stats) {
+            if (err) {
+                console.error("Error generating Excel file:", err);
+                return res.status(500).send('Error generating Excel file');
+            }
+            res.status(201).json(new Response(fileName));
+            res.download(filePath);
+        });
+    } catch (err) {
+        console.error("Erreur lors de la génération du fichier Excel:", err);
+        res.status(500).json({success: false, message: err.message});
+    }
+
+};
 
 module.exports = router;

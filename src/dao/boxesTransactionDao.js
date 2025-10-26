@@ -1,4 +1,4 @@
-const {sequelize, BoxesTransaction, Merchant, Shipowner} = require('../models');
+const {sequelize, BoxesTransaction, Merchant, Shipowner, BoxesType} = require('../models');
 
 module.exports = {
     list: async function (criteria) {
@@ -32,7 +32,25 @@ module.exports = {
             // console.log("=====================>criteria : " + JSON.stringify(criteria));
             const boxesTransactions = await BoxesTransaction.findAll({
                 where: criteria.where,
-                // include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}],
+                include: [{model: BoxesType, as: 'boxesType'}],
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return boxesTransactions;
+        } catch (error) {
+            console.error('Error retrieving boxesTransaction :', error);
+            return error;
+        }
+    },
+    findAll: async function (criteria) {
+        try {
+            // console.log("=====================>criteria : " + JSON.stringify(criteria));
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            // console.log("=====================>criteria : " + JSON.stringify(criteria));
+            const boxesTransactions = await BoxesTransaction.findAll({
+                where: criteria.where,
+                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}, {model: BoxesType, as: 'boxesType'}],
                 limit: criteria.limit,
                 offset: criteria.skip,
                 order: criteria.sort

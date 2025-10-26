@@ -1,5 +1,5 @@
 const {DataTypes} = require('sequelize');
-const {Merchant, PaymentType, Bank, ConsumptionInfo} = require("./index");
+const {Merchant, PaymentType, Bank, ConsumptionInfo, Shipowner} = require("./index");
 
 module.exports = (sequelize) => {
     const Payment = sequelize.define('payment', {
@@ -21,6 +21,12 @@ module.exports = (sequelize) => {
             type: DataTypes.INTEGER,
             allowNull: true,
             references: Merchant,
+            referencesKey: 'id'
+        },
+        shipOwnerId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: Shipowner,
             referencesKey: 'id'
         },
         isCommissionnaryPayment: {

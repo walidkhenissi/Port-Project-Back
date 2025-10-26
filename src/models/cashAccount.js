@@ -27,6 +27,11 @@ module.exports = (sequelize) => {
             type: DataTypes.BOOLEAN,
             allowNull: false,
             default: false
+        },
+        byAddress: {
+            type: DataTypes.BOOLEAN,
+            allowNull: false,
+            default: false
         }
     });
 

@@ -1,5 +1,5 @@
 const {DataTypes} = require('sequelize');
-const {Merchant, Article, Sale, ConsumptionInfo, PaymentInfo} = require("./index");
+const {Merchant, Article, Sale, ConsumptionInfo, PaymentInfo, BoxesType} = require("./index");
 module.exports = (sequelize) => {
     const SalesTransaction = sequelize.define('salesTransaction', {
         id: {
@@ -41,6 +41,12 @@ module.exports = (sequelize) => {
             type: DataTypes.INTEGER,
             allowNull: true,
             default: 0
+        },
+        boxesTypeId: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            references: BoxesType,
+            referencesKey: 'id'
         },
         grossWeight: {
             type: DataTypes.DOUBLE,

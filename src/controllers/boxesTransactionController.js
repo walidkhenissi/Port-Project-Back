@@ -4,8 +4,17 @@ const saleDao = require("../dao/saleDao");
 const salesTransactionDao = require("../dao/salesTransactionDao");
 const boxesBalanceController = require("../controllers/boxesBalanceController");
 const Response = require("../utils/response");
-const {sequelize, BoxesTransaction, Merchant, Shipowner} = require("../models");
+const {
+    sequelize, BoxesTransaction, Merchant, Shipowner, BoxesType,
+    SalesTransaction,
+    Article,
+    Sale,
+    SalesTransactionPayment,
+    PaymentType,
+    Payment
+} = require("../models");
 const {QueryTypes, Op} = require("sequelize");
+const _ = require("lodash");
 moment.locale('fr');
 
 router.get('/list', async (req, res) => {
@@ -57,12 +66,15 @@ router.post('/create', async (req, res) => {
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
         if (tools.isFalsey(boxesTransaction.shipOwnerId) && tools.isFalsey(boxesTransaction.merchantId))
             return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
+        if (tools.isFalsey(boxesTransaction.boxesTypeId))
+            return res.status(404).json(new Response({errorCode: '#INTERNAL_ERROR'}, true));
         let criteria = {
             where: {
                 date: {
                     [Op.gte]: moment(boxesTransaction.date).startOf('day').toDate(),
                     [Op.lte]: moment(boxesTransaction.date).endOf('day').toDate()
-                }
+                },
+                boxesTypeId: boxesTransaction.boxesTypeId
             }
         };
         if (!tools.isFalsey(boxesTransaction.shipOwnerId))
@@ -202,6 +214,7 @@ router.delete('/remove', async (req, res) => {
 });
 
 router.persistBySalesTransaction = async function (salesTransaction, removeCase = false) {
+    // console.log("=====================>boxesTransactionController.persistBySalesTransaction");
     try {
         if (tools.isFalsey(salesTransaction.boxes))
             return;
@@ -252,25 +265,19 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
         const error = new Error('Merchant not found error');
         throw error;
     }
-    const previousBoxesTransaction = await dao.find({
-        where: {
-            merchantId: merchantId,
-            date: {'<': moment(date).startOf('day').toDate()}
-        },
-        sort: {date: 'DESC'},
-        limit: 1
-    });
-    // console.log("=====================>previousBoxesTransaction : " + JSON.stringify(previousBoxesTransaction));
-    // let query = "select * from salesTransactions st " +
-    //     "inner join sales s on  st.saleId=s.id " +
-    //     "where" +
-    //     " st.merchantId = " + merchantId +
-    //     " and st.boxes > 0" +
-    //     " and s.date >= '" + moment(date).format(dbDateFormat) + "'" +
-    //     " ORDER BY date ASC";
-    // const purchasesTransactions = await sequelize.query(query, {
-    //     type: QueryTypes.SELECT, raw: true
-    // });
+    const boxesTypes = await BoxesType.findAll({order: [['order', 'ASC']]});
+    for (const boxesType of boxesTypes) {
+        const previousBoxesTransaction = await dao.find({
+            where: {
+                merchantId: merchantId,
+                boxesTypeId: boxesType.id,
+                date: {'<': moment(date).startOf('day').toDate()}
+            },
+            sort: {date: 'DESC'},
+            limit: 1
+        });
+        boxesType.previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    }
     const purchasesTransactions = await salesTransactionDao.find({
         where: {
             merchantId: merchantId,
@@ -282,22 +289,39 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     let purchasesTransactionsByDate = _.groupBy(purchasesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
-    // console.log("=====================>purchasesTransactionsByDate : " + JSON.stringify(purchasesTransactionsByDate));
     //Looking for sales that the mechant is the producer
-    let query = "select * from salesTransactions st " +
-        "inner join sales s on  st.saleId=s.id " +
-        "where" +
-        " s.merchantId = " + merchantId +
-        " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
-        " ORDER BY st.date ASC";
-    const salesTransactions = await sequelize.query(query, {
-        type: QueryTypes.SELECT, raw: true
+    // let query = "select * from salesTransactions st " +
+    //     "inner join sales s on  st.saleId=s.id " +
+    //     "where" +
+    //     " s.merchantId = " + merchantId +
+    //     " and st.boxes > 0" +
+    //     " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
+    //     " ORDER BY st.date ASC";
+    // const salesTransactions = await sequelize.query(query, {
+    //     type: QueryTypes.SELECT, raw: true
+    // });
+    // console.log("=====================>salesTransactions : " + JSON.stringify(salesTransactions));
+    // const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
+    //     return moment(item.date).format(dbDateFormat);
+    // });
+    const criteria = {
+        where: {
+            merchantId: merchantId,
+            date: {'>=': moment(date).startOf('day').toDate()}
+        }
+    };
+    const sales = await saleDao.findWithTransactions(criteria);
+    let salesTransactions = [];
+    for (const sale of sales) {
+        salesTransactions = _.union(salesTransactions, sale.saleTransactions)
+    }
+    salesTransactions = _.filter(salesTransactions, function (item) {
+        return item.boxes > 0;
     });
     const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
-    // console.log("=====================>salesTransactionsByDate : " + JSON.stringify(salesTransactionsByDate));
+
     const nextBoxesTransactions = await dao.list({
         where: {
             merchantId: merchantId,
@@ -307,8 +331,7 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     const nextBoxesTransactionsByDate = _.groupBy(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
-    // console.log("=====================>nextBoxesTransactionsByDate : " + JSON.stringify(nextBoxesTransactionsByDate));
-    let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    // let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
     let dates = _.compact(_.uniq(_.union(_.map(purchasesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }), _.map(salesTransactions, function (item) {
@@ -316,56 +339,58 @@ router.persistForMerchantAsCustomer = async function (merchantId, date = new Dat
     }), _.map(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }))));
-    // console.log("=====================>dates before sort : " + JSON.stringify(dates));
     dates = _.sortBy(dates, function (item) {
         return moment(item).toDate();
     }, 'asc');
-    // console.log("=====================>dates after sort : " + JSON.stringify(dates));
     for (const dateKey in dates) {
         let date = moment(dates[dateKey]).format(dbDateFormat);
-        let boxesTransaction = nextBoxesTransactionsByDate[date];
-        const purchasesTransactionsAtDate = purchasesTransactionsByDate[date];
-        const salesTransactionsAtDate = salesTransactionsByDate[date];
-        if (boxesTransaction && boxesTransaction.length)
-            boxesTransaction = boxesTransaction[0];
-        else
-            boxesTransaction = null;
-        if (!boxesTransaction) {
-            const transaction = {
-                date: tools.refactorDate(date),
-                credit: 0,
-                merchantSalesCredit: _.sumBy(salesTransactionsAtDate, 'boxes'),
-                debit: _.sumBy(purchasesTransactionsAtDate, 'boxes'),
-                balance: previousBalance + _.sumBy(salesTransactionsAtDate, 'boxes') - _.sumBy(purchasesTransactionsAtDate, 'boxes'),
-                stock: 0,
-                name: merchant.name,
-                isCommissionaryTransaction: false,
-                merchantId: merchantId
-            };
-            // transaction.balance = previousBalance + transaction.merchantSalesCredit - transaction.debit;
-            if ((!tools.isFalsey(transaction.merchantSalesCredit) && parseInt(transaction.merchantSalesCredit) != 0)
-                || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
-                boxesTransaction = await dao.create(transaction);
-                previousBalance = boxesTransaction.balance;
-            }
-        } else {
-            // console.log("=====================>boxesTransaction before set values : " + JSON.stringify(boxesTransaction));
-            boxesTransaction.merchantSalesCredit = _.sumBy(salesTransactionsAtDate, 'boxes');
-            boxesTransaction.debit = _.sumBy(purchasesTransactionsAtDate, 'boxes');
-            boxesTransaction.balance = previousBalance + boxesTransaction.credit + boxesTransaction.merchantSalesCredit - boxesTransaction.debit;
-            boxesTransaction.name = merchant.name;
-            if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0)
-                || (!tools.isFalsey(boxesTransaction.merchantSalesCredit) && parseInt(boxesTransaction.merchantSalesCredit) != 0)
-                || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
-                if (!tools.isFalsey(boxesTransaction.merchantId) && !tools.isFalsey(boxesTransaction.credit) && boxesTransaction.credit > 0)
-                    boxesTransaction.isCommissionaryTransaction = true;
-                else
-                    boxesTransaction.isCommissionaryTransaction = false;
-                boxesTransaction = await dao.update(boxesTransaction);
-                previousBalance = boxesTransaction.balance;
+        let boxesTransactions = nextBoxesTransactionsByDate[date] || [];
+        const purchasesTransactionsAtDate = purchasesTransactionsByDate[date] || [];
+        const salesTransactionsAtDate = salesTransactionsByDate[date] || [];
+        const boxesTransactionsByBoxesType = _.groupBy(boxesTransactions, 'boxesTypeId');
+        const purchasesTransactionsByBoxesType = _.groupBy(purchasesTransactionsAtDate, 'boxesTypeId');
+        const salesTransactionsByBoxesType = _.groupBy(salesTransactionsAtDate, 'boxesTypeId');
+        for (const boxesType of boxesTypes) {
+            let boxesTransaction = boxesTransactionsByBoxesType[boxesType.id];
+            if (boxesTransaction && boxesTransaction.length)
+                boxesTransaction = boxesTransaction[0];
+            let purchasesTransactions = purchasesTransactionsByBoxesType[boxesType.id];
+            let salesTransactions = salesTransactionsByBoxesType[boxesType.id];
+            if (!boxesTransaction) {
+                const transaction = {
+                    date: tools.refactorDate(date),
+                    credit: 0,
+                    merchantSalesCredit: _.sumBy(salesTransactions, 'boxes'),
+                    debit: _.sumBy(purchasesTransactions, 'boxes'),
+                    balance: boxesType.previousBalance + _.sumBy(salesTransactions, 'boxes') - _.sumBy(purchasesTransactions, 'boxes'),
+                    stock: 0,
+                    boxesTypeId: boxesType.id,
+                    name: merchant.name,
+                    isCommissionaryTransaction: false,
+                    merchantId: merchantId
+                };
+                if ((!tools.isFalsey(transaction.merchantSalesCredit) && parseInt(transaction.merchantSalesCredit) != 0)
+                    || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
+                    boxesTransaction = await dao.create(transaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                }
             } else {
-                // console.log("=====================>deleting : " + JSON.stringify(boxesTransaction));
-                await dao.remove(boxesTransaction.id);
+                boxesTransaction.merchantSalesCredit = _.sumBy(salesTransactions, 'boxes');
+                boxesTransaction.debit = _.sumBy(purchasesTransactions, 'boxes');
+                boxesTransaction.balance = boxesType.previousBalance + boxesTransaction.credit + boxesTransaction.merchantSalesCredit - boxesTransaction.debit;
+                boxesTransaction.name = merchant.name;
+                if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0)
+                    || (!tools.isFalsey(boxesTransaction.merchantSalesCredit) && parseInt(boxesTransaction.merchantSalesCredit) != 0)
+                    || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
+                    if (!tools.isFalsey(boxesTransaction.merchantId) && !tools.isFalsey(boxesTransaction.credit) && boxesTransaction.credit > 0)
+                        boxesTransaction.isCommissionaryTransaction = true;
+                    else
+                        boxesTransaction.isCommissionaryTransaction = false;
+                    boxesTransaction = await dao.update(boxesTransaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                } else {
+                    await dao.remove(boxesTransaction.id);
+                }
             }
         }
     }
@@ -379,24 +404,47 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
         const error = new Error('ShipOwner not found error');
         throw error;
     }
-    const previousBoxesTransaction = await dao.find({
+    const boxesTypes = await BoxesType.findAll({order: [['order', 'ASC']]});
+    for (const boxesType of boxesTypes) {
+        const previousBoxesTransaction = await dao.find({
+            where: {
+                shipOwnerId: shipOwnerId,
+                boxesTypeId: boxesType.id,
+                date: {'<': moment(date).startOf('day').toDate()}
+            },
+            sort: {date: 'DESC'},
+            limit: 1
+        });
+        boxesType.previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    }
+    // const query = "select * from salesTransactions st " +
+    //     "inner join sales s on  st.saleId=s.id " +
+    //     "where" +
+    //     " s.shipOwnerId = " + shipOwnerId +
+    //     " and st.boxes > 0" +
+    //     " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
+    //     " ORDER BY st.date ASC";
+    // const salesTransactions = await sequelize.query(query, {
+    //     type: QueryTypes.SELECT, raw: true
+    // });
+    // const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
+    //     return moment(item.date).format(dbDateFormat);
+    // });
+    const criteria = {
         where: {
             shipOwnerId: shipOwnerId,
-            date: {'<': moment(date).startOf('day').toDate()}
-        },
-        sort: {date: 'DESC'},
-        limit: 1
+            date: {'>=': moment(date).startOf('day').toDate()}
+        }
+    };
+    const sales = await saleDao.findWithTransactions(criteria);
+    let salesTransactions = [];
+    for (const sale of sales) {
+        salesTransactions = _.union(salesTransactions, sale.saleTransactions)
+    }
+    salesTransactions = _.filter(salesTransactions, function (item) {
+        return item.boxes > 0;
     });
-    const query = "select * from salesTransactions st " +
-        "inner join sales s on  st.saleId=s.id " +
-        "where" +
-        " s.shipOwnerId = " + shipOwnerId +
-        " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
-        " ORDER BY st.date ASC";
-    const salesTransactions = await sequelize.query(query, {
-        type: QueryTypes.SELECT, raw: true
-    });
+    // console.log("=====================>salesTransactions : " + JSON.stringify(salesTransactions));
     const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
@@ -409,7 +457,7 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
     const nextBoxesTransactionsByDate = _.groupBy(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
-    let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    // let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
     let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }), _.map(nextBoxesTransactions, function (item) {
@@ -420,41 +468,46 @@ router.persistForShipOwnerAsProducer = async function (shipOwnerId, date = new D
     }, 'asc');
     for (const dateKey in dates) {
         let date = moment(dates[dateKey]).format(dbDateFormat);
-        let boxesTransaction = nextBoxesTransactionsByDate[date];
-        const salesTransactionsAtDate = salesTransactionsByDate[date];
-        if (boxesTransaction && boxesTransaction.length)
-            boxesTransaction = boxesTransaction[0];
-        else
-            boxesTransaction = null;
-        if (!boxesTransaction) {
-            const transaction = {
-                date: tools.refactorDate(date),
-                credit: _.sumBy(salesTransactionsAtDate, 'boxes'),
-                debit: 0,
-                balance: previousBalance + _.sumBy(salesTransactionsAtDate, 'boxes'),
-                stock: 0,
-                name: shipOwner.name,
-                merchantSalesCredit: 0,
-                isCommissionaryTransaction: false,
-                shipOwnerId: shipOwnerId
-            };
-            if ((!tools.isFalsey(transaction.credit) && parseInt(transaction.credit) != 0) || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
-                boxesTransaction = await dao.create(transaction);
-                previousBalance = boxesTransaction.balance;
+        let boxesTransactions = nextBoxesTransactionsByDate[date] || [];
+        const salesTransactionsAtDate = salesTransactionsByDate[date] || [];
+        const boxesTransactionsByBoxesType = _.groupBy(boxesTransactions, 'boxesTypeId');
+        const salesTransactionsByBoxesType = _.groupBy(salesTransactionsAtDate, 'boxesTypeId');
+        for (const boxesType of boxesTypes) {
+            let boxesTransaction = boxesTransactionsByBoxesType[boxesType.id];
+            if (boxesTransaction && boxesTransaction.length)
+                boxesTransaction = boxesTransaction[0];
+            let salesTransactions = salesTransactionsByBoxesType[boxesType.id];
+            if (!boxesTransaction) {
+                const transaction = {
+                    date: tools.refactorDate(date),
+                    credit: _.sumBy(salesTransactions, 'boxes'),
+                    debit: 0,
+                    balance: boxesType.previousBalance + _.sumBy(salesTransactions, 'boxes'),
+                    stock: 0,
+                    boxesTypeId: boxesType.id,
+                    name: shipOwner.name,
+                    merchantSalesCredit: 0,
+                    isCommissionaryTransaction: false,
+                    shipOwnerId: shipOwnerId
+                };
+                if ((!tools.isFalsey(transaction.credit) && parseInt(transaction.credit) != 0) || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
+                    boxesTransaction = await dao.create(transaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                }
+            } else {
+                boxesTransaction.credit = _.sumBy(salesTransactions, 'boxes');
+                boxesTransaction.balance = boxesType.previousBalance + boxesTransaction.credit - boxesTransaction.debit;
+                boxesTransaction.name = shipOwner.name;
+                if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0) || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
+                    if (!tools.isFalsey(boxesTransaction.shipOwnerId) && !tools.isFalsey(boxesTransaction.debit) && boxesTransaction.debit > 0)
+                        boxesTransaction.isCommissionaryTransaction = true;
+                    else
+                        boxesTransaction.isCommissionaryTransaction = false;
+                    boxesTransaction = await dao.update(boxesTransaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                } else
+                    await dao.remove(boxesTransaction.id);
             }
-        } else {
-            boxesTransaction.credit = _.sumBy(salesTransactionsAtDate, 'boxes');
-            boxesTransaction.balance = previousBalance + boxesTransaction.credit - boxesTransaction.debit;
-            boxesTransaction.name = shipOwner.name;
-            if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0) || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
-                if (!tools.isFalsey(boxesTransaction.shipOwnerId) && !tools.isFalsey(boxesTransaction.debit) && boxesTransaction.debit > 0)
-                    boxesTransaction.isCommissionaryTransaction = true;
-                else
-                    boxesTransaction.isCommissionaryTransaction = false;
-                boxesTransaction = await dao.update(boxesTransaction);
-                previousBalance = boxesTransaction.balance;
-            } else
-                await dao.remove(boxesTransaction.id);
         }
     }
     await boxesBalanceController.updateByShipOwner(shipOwnerId);
@@ -467,42 +520,54 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
         const error = new Error('Merchant not found error');
         throw error;
     }
-    const previousBoxesTransaction = await dao.find({
-        where: {
-            merchantId: merchantId,
-            date: {'<': moment(date).startOf('day').toDate()}
-        },
-        sort: {date: 'DESC'},
-        limit: 1
-    });
-    // let query = "select * from salesTransactions st " +
-    //     "inner join sales s on  st.saleId=s.id " +
-    //     "where" +
-    //     " st.merchantId = " + merchantId +
-    //     " and st.boxes > 0" +
-    //     " and s.date >= '" + moment(date).format(dbDateFormat) + "'" +
-    //     " ORDER BY date ASC";
-    // const purchasesTransactions = await sequelize.query(query, {
-    //     type: QueryTypes.SELECT, raw: true
-    // });
+    const boxesTypes = await BoxesType.findAll({order: [['order', 'ASC']]});
+    for (const boxesType of boxesTypes) {
+        const previousBoxesTransaction = await dao.find({
+            where: {
+                merchantId: merchantId,
+                boxesTypeId: boxesType.id,
+                date: {'<': moment(date).startOf('day').toDate()}
+            },
+            sort: {date: 'DESC'},
+            limit: 1
+        });
+        boxesType.previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    }
     const purchasesTransactions = await salesTransactionDao.find({
         where: {
             merchantId: merchantId,
             boxes: {'>': 0},
-            date: {'>=': moment(date).toDate()}
+            date: {'>=': moment(date).startOf('day').toDate()}
         },
         sort: {date: 'ASC'}
     });
-    let purchasesTransactionsByDate = _.groupBy(purchasesTransactions, 'date');
-    query = "select * from salesTransactions st " +
-        "inner join sales s on  st.saleId=s.id " +
-        "where" +
-        " s.merchantId = " + merchantId +
-        " and st.boxes > 0" +
-        " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
-        " ORDER BY st.date ASC";
-    const salesTransactions = await sequelize.query(query, {
-        type: QueryTypes.SELECT, raw: true
+    let purchasesTransactionsByDate = _.groupBy(purchasesTransactions, function (item) {
+        return moment(item.date).format(dbDateFormat);
+    });
+    // query = "select * from salesTransactions st " +
+    //     "inner join sales s on  st.saleId=s.id " +
+    //     "where" +
+    //     " s.merchantId = " + merchantId +
+    //     " and st.boxes > 0" +
+    //     " and s.date >= '" + moment(date).startOf('day').format(dbDateTimeFormat) + "'" +
+    //     " ORDER BY st.date ASC";
+    // const salesTransactions = await sequelize.query(query, {
+    //     type: QueryTypes.SELECT, raw: true
+    // });
+    // console.log("=====================>criteria : " + JSON.stringify(criteria));
+    const criteria = {
+        where: {
+            merchantId: merchantId,
+            date: {'>=': moment(date).startOf('day').toDate()}
+        }
+    };
+    const sales = await saleDao.findWithTransactions(criteria);
+    let salesTransactions = [];
+    for (const sale of sales) {
+        salesTransactions = _.union(salesTransactions, sale.saleTransactions)
+    }
+    salesTransactions = _.filter(salesTransactions, function (item) {
+        return item.boxes > 0;
     });
     const salesTransactionsByDate = _.groupBy(salesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
@@ -516,7 +581,7 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
     const nextBoxesTransactionsByDate = _.groupBy(nextBoxesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     });
-    let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
+    // let previousBalance = (previousBoxesTransaction && previousBoxesTransaction.length) ? (previousBoxesTransaction[0].balance || 0) : 0;
     let dates = _.compact(_.uniq(_.union(_.map(salesTransactions, function (item) {
         return moment(item.date).format(dbDateFormat);
     }), _.map(purchasesTransactions, function (item) {
@@ -529,47 +594,54 @@ router.persistForMerchantAsProducer = async function (merchantId, date = new Dat
     }, 'asc');
     for (const dateKey in dates) {
         let date = moment(dates[dateKey]).format(dbDateFormat);
-        let boxesTransaction = nextBoxesTransactionsByDate[date];
-        const salesTransactionsAtDate = salesTransactionsByDate[date];
-        const purchasesTransactionsAtDate = purchasesTransactionsByDate[date];
-        if (boxesTransaction && boxesTransaction.length)
-            boxesTransaction = boxesTransaction[0];
-        else
-            boxesTransaction = null;
-        if (!boxesTransaction) {
-            const transaction = {
-                date: tools.refactorDate(date),
-                credit: 0,
-                debit: _.sumBy(purchasesTransactionsAtDate, 'boxes'),
-                merchantSalesCredit: _.sumBy(salesTransactionsAtDate, 'boxes'),
-                balance: previousBalance + _.sumBy(salesTransactionsAtDate, 'boxes'),
-                stock: 0,
-                name: merchant.name,
-                isCommissionaryTransaction: false,
-                merchantId: merchantId
-            };
-            if ((!tools.isFalsey(transaction.credit) && parseInt(transaction.credit) != 0)
-                || (!tools.isFalsey(transaction.merchantSalesCredit) && parseInt(transaction.merchantSalesCredit) != 0)
-                || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
-                boxesTransaction = await dao.create(transaction);
-                previousBalance = boxesTransaction.balance;
+        let boxesTransactions = nextBoxesTransactionsByDate[date] || [];
+        const purchasesTransactionsAtDate = purchasesTransactionsByDate[date] || [];
+        const salesTransactionsAtDate = salesTransactionsByDate[date] || [];
+        const boxesTransactionsByBoxesType = _.groupBy(boxesTransactions, 'boxesTypeId');
+        const purchasesTransactionsByBoxesType = _.groupBy(purchasesTransactionsAtDate, 'boxesTypeId');
+        const salesTransactionsByBoxesType = _.groupBy(salesTransactionsAtDate, 'boxesTypeId');
+        for (const boxesType of boxesTypes) {
+            let boxesTransaction = boxesTransactionsByBoxesType[boxesType.id];
+            if (boxesTransaction && boxesTransaction.length)
+                boxesTransaction = boxesTransaction[0];
+            let purchasesTransactions = purchasesTransactionsByBoxesType[boxesType.id];
+            let salesTransactions = salesTransactionsByBoxesType[boxesType.id];
+            if (!boxesTransaction) {
+                const transaction = {
+                    date: tools.refactorDate(date),
+                    credit: 0,
+                    debit: _.sumBy(purchasesTransactions, 'boxes'),
+                    merchantSalesCredit: _.sumBy(salesTransactions, 'boxes'),
+                    balance: boxesType.previousBalance + _.sumBy(salesTransactions, 'boxes'),
+                    stock: 0,
+                    name: merchant.name,
+                    boxesTypeId: boxesType.id,
+                    isCommissionaryTransaction: false,
+                    merchantId: merchantId
+                };
+                if ((!tools.isFalsey(transaction.credit) && parseInt(transaction.credit) != 0)
+                    || (!tools.isFalsey(transaction.merchantSalesCredit) && parseInt(transaction.merchantSalesCredit) != 0)
+                    || (!tools.isFalsey(transaction.debit) && parseInt(transaction.debit) != 0)) {
+                    boxesTransaction = await dao.create(transaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                }
+            } else {
+                boxesTransaction.debit = _.sumBy(purchasesTransactions, 'boxes');
+                boxesTransaction.merchantSalesCredit = _.sumBy(salesTransactions, 'boxes');
+                boxesTransaction.balance = boxesType.previousBalance + boxesTransaction.credit + boxesTransaction.merchantSalesCredit - boxesTransaction.debit;
+                boxesTransaction.name = merchant.name;
+                if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0)
+                    || (!tools.isFalsey(boxesTransaction.merchantSalesCredit) && parseInt(boxesTransaction.merchantSalesCredit) != 0)
+                    || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
+                    if (!tools.isFalsey(boxesTransaction.merchantId) && !tools.isFalsey(boxesTransaction.credit) && boxesTransaction.credit > 0)
+                        boxesTransaction.isCommissionaryTransaction = true;
+                    else
+                        boxesTransaction.isCommissionaryTransaction = false;
+                    boxesTransaction = await dao.update(boxesTransaction);
+                    boxesType.previousBalance = boxesTransaction.balance;
+                } else
+                    await dao.remove(boxesTransaction.id);
             }
-        } else {
-            boxesTransaction.debit = _.sumBy(purchasesTransactionsAtDate, 'boxes');
-            boxesTransaction.merchantSalesCredit = _.sumBy(salesTransactionsAtDate, 'boxes');
-            boxesTransaction.balance = previousBalance + boxesTransaction.credit + boxesTransaction.merchantSalesCredit - boxesTransaction.debit;
-            boxesTransaction.name = merchant.name;
-            if ((!tools.isFalsey(boxesTransaction.credit) && parseInt(boxesTransaction.credit) != 0)
-                || (!tools.isFalsey(boxesTransaction.merchantSalesCredit) && parseInt(boxesTransaction.merchantSalesCredit) != 0)
-                || (!tools.isFalsey(boxesTransaction.debit) && parseInt(boxesTransaction.debit) != 0)) {
-                if (!tools.isFalsey(boxesTransaction.merchantId) && !tools.isFalsey(boxesTransaction.credit) && boxesTransaction.credit > 0)
-                    boxesTransaction.isCommissionaryTransaction = true;
-                else
-                    boxesTransaction.isCommissionaryTransaction = false;
-                boxesTransaction = await dao.update(boxesTransaction);
-                previousBalance = boxesTransaction.balance;
-            } else
-                await dao.remove(boxesTransaction.id);
         }
     }
     await boxesBalanceController.updateByMerchant(merchantId);
@@ -594,29 +666,35 @@ router.persistBySale = async function (sale) {
 router.updateStock = async function (date = new Date()) {
     let result = await BoxesTransaction.findAll({
         attributes: [
-            [sequelize.fn('sum', sequelize.col('debit')), 'debit']
+            [sequelize.fn('sum', sequelize.col('debit')), 'debit'],
+            "boxesTypeId"
         ],
         raw: true,
+        group: ["boxesTypeId"],
         where: {
             shipOwnerId: {[Op.ne]: null},
             isCommissionaryTransaction: true,
             date: {[Op.lt]: moment(date).startOf('day').toDate()}
         }
     });
-    let _shipOwnersDebit = (result && result.length) ? (result[0]["debit"] || 0) : 0;
+    const debitResultByBoxesTypeIds = _.groupBy(result, "boxesTypeId");
+    // let _shipOwnersDebit = (result && result.length) ? (result[0]["debit"] || 0) : 0;
     result = await BoxesTransaction.findAll({
         attributes: [
-            [sequelize.fn('sum', sequelize.col('credit')), 'credit']
+            [sequelize.fn('sum', sequelize.col('credit')), 'credit'],
+            "boxesTypeId"
         ],
         raw: true,
+        group: ["boxesTypeId"],
         where: {
             merchantId: {[Op.ne]: null},
             isCommissionaryTransaction: true,
             date: {[Op.lt]: moment(date).startOf('day').toDate()}
         }
     });
-    let _merchantsCredit = (result && result.length) ? (result[0]["credit"] || 0) : 0;
-    let previousStock = _merchantsCredit - _shipOwnersDebit;
+    const creditResultByBoxesTypeIds = _.groupBy(result, "boxesTypeId");
+    // let _merchantsCredit = (result && result.length) ? (result[0]["credit"] || 0) : 0;
+    // let previousStock = _merchantsCredit - _shipOwnersDebit;
     const nextBoxesTransactions = await dao.list({
         where: {
             isCommissionaryTransaction: true,
@@ -624,18 +702,48 @@ router.updateStock = async function (date = new Date()) {
         },
         sort: {date: 'ASC'}
     });
-    for (const key in nextBoxesTransactions) {
-        _shipOwnersDebit = 0;
-        _merchantsCredit = 0;
-        const boxesTransaction = nextBoxesTransactions[key];
-        if (boxesTransaction.merchantId)
-            _merchantsCredit = boxesTransaction.credit || 0;
-        else if (boxesTransaction.shipOwnerId)
-            _shipOwnersDebit = boxesTransaction.debit || 0;
-        boxesTransaction.stock = previousStock + _merchantsCredit - _shipOwnersDebit
-        previousStock = boxesTransaction.stock;
-        await boxesTransaction.save();
+    let _shipOwnersDebit, _merchantsCredit;
+    const nextBoxesTransactionsByBoxesTypeIds = _.groupBy(nextBoxesTransactions, "boxesTypeId");
+    const boxesTypes = await BoxesType.findAll({order: [['order', 'ASC']]});
+    for (const boxesType of boxesTypes) {
+        let debitResultForType = debitResultByBoxesTypeIds[boxesType.id];
+        if (debitResultForType && debitResultForType.length)
+            debitResultForType = debitResultForType[0];
+        else
+            debitResultForType = null;
+        let creditResultForType = creditResultByBoxesTypeIds[boxesType.id];
+        if (creditResultForType && creditResultForType.length)
+            creditResultForType = creditResultForType[0];
+        else
+            creditResultForType = null;
+        const nextBoxesTransactionsForType = nextBoxesTransactionsByBoxesTypeIds[boxesType.id];
+        let previousBalanceForType = creditResultForType ? (creditResultForType.credit || 0) : 0;
+        previousBalanceForType -= debitResultForType ? (debitResultForType.debit || 0) : 0;
+        if (nextBoxesTransactionsForType && nextBoxesTransactionsForType.length)
+            for (const boxesTransaction of nextBoxesTransactionsForType) {
+                _shipOwnersDebit = 0;
+                _merchantsCredit = 0;
+                if (boxesTransaction.merchantId)
+                    _merchantsCredit = boxesTransaction.credit || 0;
+                else if (boxesTransaction.shipOwnerId)
+                    _shipOwnersDebit = boxesTransaction.debit || 0;
+                boxesTransaction.stock = previousBalanceForType + _merchantsCredit - _shipOwnersDebit
+                previousBalanceForType = boxesTransaction.stock;
+                await boxesTransaction.save();
+            }
     }
+    // for (const key in nextBoxesTransactions) {
+    //     _shipOwnersDebit = 0;
+    //     _merchantsCredit = 0;
+    //     const boxesTransaction = nextBoxesTransactions[key];
+    //     if (boxesTransaction.merchantId)
+    //         _merchantsCredit = boxesTransaction.credit || 0;
+    //     else if (boxesTransaction.shipOwnerId)
+    //         _shipOwnersDebit = boxesTransaction.debit || 0;
+    //     boxesTransaction.stock = previousStock + _merchantsCredit - _shipOwnersDebit
+    //     previousStock = boxesTransaction.stock;
+    //     await boxesTransaction.save();
+    // }
 }
 
 module.exports = router;

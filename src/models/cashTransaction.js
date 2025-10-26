@@ -1,5 +1,5 @@
 const {DataTypes} = require('sequelize');
-const {CashAccount, Payment, User} = require("./index");
+const {CashAccount, Payment, User, Shipowner, Merchant} = require("./index");
 
 module.exports = (sequelize) => {
     const CashTransaction = sequelize.define('cashTransaction', {
@@ -54,6 +54,18 @@ module.exports = (sequelize) => {
             type: DataTypes.BOOLEAN,
             allowNull: false,
             default: false
+        },
+        shipOwnerId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: Shipowner,
+            referencesKey: 'id'
+        },
+        merchantId: {
+            type: DataTypes.INTEGER,
+            allowNull: true,
+            references: Merchant,
+            referencesKey: 'id'
         },
         // createUserId: {
         //     type: DataTypes.INTEGER,

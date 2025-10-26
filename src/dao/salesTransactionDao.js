@@ -155,6 +155,7 @@ module.exports = {
         }
     },
     update: async function (salesTransaction) {
+        // console.log("=====================>salesTransactionDao.update");
         // Find the salesTransaction by ID
         const oldSalesTransaction = await SalesTransaction.findByPk(salesTransaction.id);
         if (!oldSalesTransaction) {

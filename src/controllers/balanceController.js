@@ -11,13 +11,15 @@ const {
     BeneficiaryBalance,
     CommissionValue,
     Beneficiary,
-    Payment, SalePayment, Shipowner, Merchant
+    Payment, SalePayment, Shipowner, Merchant, PaymentType
 } = require("../models");
 const PdfPrinter = require("pdfmake");
 const fs = require("fs");
 const path = require("path");
 const salesTransactionDao = require("../dao/salesTransactionDao");
 const xl = require("excel4node");
+const {Op} = require("sequelize");
+const _ = require("lodash");
 
 router.get('/list', async (req, res) => {
     let criteria = req.body;
@@ -102,7 +104,6 @@ router.delete('/remove', async (req, res) => {
 });
 
 router.updateByShipOwnerAsProducer = async function (shipOwnerId, date = new Date()) {
-    // console.log("=====================>updateByShipOwnerAsProducer : " + JSON.stringify(shipOwnerId));
     let balance = await dao.find({where: {shipOwnerId: shipOwnerId}});
     if (!balance || !balance.length)
         balance = await dao.create({
@@ -123,33 +124,39 @@ router.updateByShipOwnerAsProducer = async function (shipOwnerId, date = new Dat
         raw: true,
         where: {shipOwnerId: shipOwnerId}
     });
-    // console.log("=====================>balance before update : " + JSON.stringify(balance));
     const totalToPay = Number(parseFloat((result && result.length) ? (result[0]["totalToPay"] || 0) : 0).toFixed(3));
     const totalProducerCommission = Number(parseFloat((result && result.length) ? (result[0]["totalProducerCommission"] || 0) : 0).toFixed(3));
     balance.credit = totalToPay;
     balance.producerCommission = totalProducerCommission;
-    let salesIds = await Sale.findAll({
-        attributes: ['id'],
-        where: {shipOwnerId: shipOwnerId}
+    const totalReceivedPaymentsAmount = await Payment.findAll({
+        attributes: [
+            [sequelize.fn('sum', sequelize.col('value')), 'value']
+        ],
+        raw: true,
+        where: {shipOwnerId: shipOwnerId, isCommissionnaryPayment: true, '$paymentType.byAddress$': true},
+        include: [{model: PaymentType, as: 'paymentType'}]
     });
+    const totalRecievedPayments = (totalReceivedPaymentsAmount && totalReceivedPaymentsAmount.length) ? (totalReceivedPaymentsAmount[0]["value"] || 0) : 0;
+    balance.debit = totalRecievedPayments;
+
     const totalPaymentsAmount = await SalePayment.findAll({
         attributes: [
             [sequelize.fn('sum', sequelize.col('value')), 'value']
         ],
         raw: true,
-        where: {saleId: _.keys(_.keyBy(salesIds, 'id')).map(Number)}
+        where: {'$sale.shipOwnerId$': shipOwnerId, '$paymentType.byAddress$': false},
+        include: [{model: Sale, as: 'sale'}, {model: PaymentType, as: 'paymentType'}]
     });
+
     const totalPayments = (totalPaymentsAmount && totalPaymentsAmount.length) ? (totalPaymentsAmount[0]["value"] || 0) : 0;
-    // console.log("=====================>totalPayments : " + JSON.stringify(totalPayments));
-    balance.debit = totalPayments;
+    balance.debit += totalPayments;
     balance.balance = Number(parseFloat(balance.credit - (balance.debit || 0)).toFixed(3));
-    // console.log("=====================>balance to update : " + JSON.stringify(balance));
     const updated = await dao.update(balance);
-    // await router.updateBeneficiaryCommissionsBalance(date);
     return updated;
 }
 
 router.updateMerchantBalance = async function (merchantId, date = new Date()) {
+    // console.log("=====================>balanceController.updateMerchantBalance");
     let balance = await dao.find({where: {merchantId: merchantId}});
     if (!balance || !balance.length)
         balance = await dao.create({
@@ -193,8 +200,22 @@ router.updateMerchantBalance = async function (merchantId, date = new Date()) {
     });
     const totalPurchasesPrice = Number(parseFloat((totalPurchasesAmount && totalPurchasesAmount.length) ? (totalPurchasesAmount[0]["totalPrice"] || 0) : 0).toFixed(3));
     const totalMerchantCommissions = Number(parseFloat((totalPurchasesAmount && totalPurchasesAmount.length) ? (totalPurchasesAmount[0]["merchantCommission"] || 0) : 0).toFixed(3));
-    // console.log("=====================>totalPurchasesPrice : " + JSON.stringify(totalPurchasesPrice));
+    const byAddressPaymentTypes = await PaymentType.findAll({where: {byAddress: true}});
+    const byAddressPaymentTypesIds = _.keys(_.keyBy(byAddressPaymentTypes, 'id')).map(Number);
+    // console.log("=====================>total des achat du commercant : " + JSON.stringify(totalPurchasesPrice));
+    // console.log("=====================>total des commission commercant à payer par le commerçant : " + JSON.stringify(totalMerchantCommissions));
+    const totalReceivedPaymentsAmount = await Payment.findAll({
+        attributes: [
+            [sequelize.fn('sum', sequelize.col('value')), 'value']
+        ],
+        raw: true,
+        where: {merchantId: merchantId, isCommissionnaryPayment: true, '$paymentType.byAddress$': true},
+        include: [{model: PaymentType, as: 'paymentType'}]
+    });
+    const totalRecievedPayments = (totalReceivedPaymentsAmount && totalReceivedPaymentsAmount.length) ? (totalReceivedPaymentsAmount[0]["value"] || 0) : 0;
+    // console.log("=====================>total des avances recues par le commerçant : " + JSON.stringify(totalRecievedPayments));
     balance.debit = Number(parseFloat(totalPurchasesPrice + totalMerchantCommissions).toFixed(3));
+    balance.debit += totalRecievedPayments;
     balance.merchantCommission = totalMerchantCommissions;
     balance.balance = Number(parseFloat((balance.credit || 0) - (balance.debit || 0)).toFixed(3));
     const updated = await dao.update(balance);
@@ -235,6 +256,7 @@ router.updateMerchantBalance = async function (merchantId, date = new Date()) {
 // }
 
 router.updateBeneficiaryCommissionsBalance = async function (date) {
+    // console.log("=====================>balanceController.updateBeneficiaryCommissionsBalance");
     const beneficiaries = await beneficiaryDao.list();
     let beneficiaryBalances = [];
     for (let i in beneficiaries) {

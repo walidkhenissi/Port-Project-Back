@@ -1,5 +1,5 @@
 const {DataTypes} = require('sequelize');
-const {Shipowner, Merchant} = require("./index");
+const {Shipowner, Merchant, BoxesType} = require("./index");
 module.exports = (sequelize) => {
     const BoxesBalance = sequelize.define('boxesBalance', {
         id: {
@@ -28,6 +28,12 @@ module.exports = (sequelize) => {
             precision: 3,
             default: 0,
             allowNull: false
+        },
+        boxesTypeId: {
+            type: DataTypes.INTEGER,
+            allowNull: false,
+            references: BoxesType,
+            referencesKey: 'id'
         },
         merchantId: {
             type: DataTypes.INTEGER,

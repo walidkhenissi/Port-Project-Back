@@ -1,4 +1,4 @@
-const {sequelize, BoxesBalance, Merchant, Shipowner} = require('../models');
+const {sequelize, BoxesBalance, Merchant, Shipowner, BoxesType} = require('../models');
 
 module.exports = {
     list: async function (criteria) {
@@ -30,7 +30,7 @@ module.exports = {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
             const balances = await BoxesBalance.findAll({
                 where: criteria.where,
-                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}],
+                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}, {model: BoxesType, as: 'boxesType'}],
                 limit: criteria.limit,
                 offset: criteria.skip,
                 order: criteria.sort
@@ -46,7 +46,7 @@ module.exports = {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
             const balances = await BoxesBalance.findOne({
                 where: criteria.where,
-                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}]
+                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}, {model: BoxesType, as: 'boxesType'}]
             });
             return balances;
         } catch (error) {
@@ -57,7 +57,7 @@ module.exports = {
     get: async function (id) {
         try {
             const balance = await BoxesBalance.findByPk(id, {
-                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}],
+                include: [{model: Shipowner, as: 'shipOwner'}, {model: Merchant, as: 'merchant'}, {model: BoxesType, as: 'boxesType'}],
             });
             return balance;
         } catch (error) {

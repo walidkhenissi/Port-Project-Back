@@ -1,7 +1,8 @@
 const router = require('express').Router();
 const dao = require("../dao/cashTransactionDao");
+const shipOwnerDao = require("../dao/shipOwnerDao");
 const Response = require("../utils/response");
-const {CashTransaction} = require("../models");
+const {CashTransaction, CashAccount, Merchant} = require("../models");
 const {Op} = require("sequelize");
 moment.locale('fr');
 
@@ -110,5 +111,28 @@ router.updateBalance = async function (date) {
         previousBalance = transaction.balance;
     }
 }
-
+//id integer parameter : is the person id, ShipOwner or merchant
+//isMerchant boolean parameter : to specify if the person is merchant; Default is shipOwner
+router.getCreditSold = async function (id, isMerchant) {
+    let person;
+    if (!isMerchant)
+        person = await shipOwnerDao.get(id);
+    else
+        person = await Merchant.findByPk(id);
+    if (tools.isFalsey(person))
+        return new Error('Internal Server Error');
+    let creditAccount = await CashAccount.findOne({where: {key: 'CREDIT'}});
+    if (!tools.isFalsey(creditAccount)) {
+        let criteria = {where: {accountId: creditAccount.id}};
+        if (isMerchant)
+            criteria.where.merchantId = id;
+        else
+            criteria.where.shipOwnerId = id;
+        let creditTransactions = await dao.find(criteria);
+        let credit = _.sumBy(creditTransactions, 'credit');
+        credit -= _.sumBy(creditTransactions, 'debit');
+        return credit;
+    } else
+        return new Error('Internal Server Error');
+}
 module.exports = router;

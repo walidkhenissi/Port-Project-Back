@@ -1,5 +1,6 @@
 var router = require('express').Router();
 const dao = require("../dao/commissionDao");
+const saleDao = require("../dao/saleDao");
 const Response = require("../utils/response");
 const {Op} = require("sequelize");
 const {CommissionHistory, Commission, CommissionValue, Sale, sequelize, SalesTransaction} = require("../models");
@@ -128,6 +129,7 @@ router.getAvailableCommissionsAtDate = async function (date, commissionId = null
 };
 
 router.updateCommissionsBySaleTransaction = async function (saleTransactionId) {
+    // console.log("=====================>commissionController.updateCommissionsBySaleTransaction");
     try {
         let saleTransaction = await salesTransactionDao.get(saleTransactionId);
         const commissionValues = await commissionValueController.updateCommissionValuesBySaleTransaction(saleTransaction);
@@ -151,7 +153,9 @@ router.updateCommissionsBySaleTransaction = async function (saleTransactionId) {
         let updatedSaleTransaction = await salesTransactionDao.update(saleTransaction);
         //Manage sale commissions
         // let sale = router.calculateSaleCommissions(saleTransaction.sale);
-        await saleController.update(saleTransaction.sale);
+        // await saleController.update(saleTransaction.sale);
+        let sale = await saleController.repopulateSaleValues(saleTransaction.sale);
+        await saleDao.update(sale);
         return updatedSaleTransaction;
     } catch (error) {
         const msg = 'Error updating commissions for saleTransaction';

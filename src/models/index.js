@@ -18,6 +18,7 @@ const CommissionValueModel = require('./commissionValue.js');
 const BeneficiaryBalanceModel = require('./beneficiaryBalance.js');
 const BoxesBalanceModel = require('./boxesBalance.js');
 const BoxesTransactionModel = require('./boxesTransaction.js');
+const BoxesTypeModel = require('./boxesType.js');
 const PaymentTypeModel = require('./paymentType.js');
 const PaymentModel = require('./payment.js');
 const BankModel = require('./bank.js');
@@ -34,7 +35,7 @@ const sequelize = new Sequelize({
         collate: 'utf8_general_ci',
         // timestamps: false
     },
-    logging: false
+     //logging: false
 });
 
 const Merchant = MerchantModel(sequelize);
@@ -56,6 +57,7 @@ const CommissionValue = CommissionValueModel(sequelize);
 const BeneficiaryBalance = BeneficiaryBalanceModel(sequelize);
 const BoxesBalance = BoxesBalanceModel(sequelize);
 const BoxesTransaction = BoxesTransactionModel(sequelize);
+const BoxesType = BoxesTypeModel(sequelize);
 const PaymentType = PaymentTypeModel(sequelize);
 const Payment = PaymentModel(sequelize);
 const Bank = BankModel(sequelize);
@@ -133,11 +135,15 @@ Merchant.hasOne(BoxesBalance, {foreignKey: 'merchantId', targetKey: 'id', as: 'b
 BoxesBalance.belongsTo(Merchant, {foreignKey: 'merchantId', targetKey: 'id', as: 'merchant'});
 Shipowner.hasOne(BoxesBalance, {foreignKey: 'shipOwnerId', targetKey: 'id', as: 'boxesBalance'});
 BoxesBalance.belongsTo(Shipowner, {foreignKey: 'shipOwnerId', targetKey: 'id', as: 'shipOwner'});
+BoxesType.hasOne(BoxesBalance, {foreignKey: 'boxesTypeId', targetKey: 'id', as: 'boxesBalance'});
+BoxesBalance.belongsTo(BoxesType, {foreignKey: 'boxesTypeId', targetKey: 'id', as: 'boxesType'});
 
 Merchant.hasOne(BoxesTransaction, {foreignKey: 'merchantId', targetKey: 'id', as: 'boxesTransaction'});
 BoxesTransaction.belongsTo(Merchant, {foreignKey: 'merchantId', targetKey: 'id', as: 'merchant'});
 Shipowner.hasOne(BoxesTransaction, {foreignKey: 'shipOwnerId', targetKey: 'id', as: 'boxesTransaction'});
 BoxesTransaction.belongsTo(Shipowner, {foreignKey: 'shipOwnerId', targetKey: 'id', as: 'shipOwner'});
+BoxesType.hasOne(BoxesTransaction, {foreignKey: 'boxesTypeId', targetKey: 'id', as: 'boxesTransaction'});
+BoxesTransaction.belongsTo(BoxesType, {foreignKey: 'boxesTypeId', targetKey: 'id', as: 'boxesType'});
 
 
 PaymentType.hasMany(Payment, {foreignKey: 'paymentTypeId', sourceKey: 'id', as: 'payments'});
@@ -148,6 +154,8 @@ ConsumptionInfo.hasMany(Payment, {foreignKey: 'consumptionInfoId', sourceKey: 'i
 Payment.belongsTo(ConsumptionInfo, {foreignKey: 'consumptionInfoId', targetKey: 'id', as: 'consumptionInfo'});
 Merchant.hasMany(Payment, {foreignKey: 'merchantId', sourceKey: 'id', as: 'payments'});
 Payment.belongsTo(Merchant, {foreignKey: 'merchantId', targetKey: 'id', as: 'merchant'});
+Shipowner.hasMany(Payment, {foreignKey: 'shipOwnerId', sourceKey: 'id', as: 'payments'});
+Payment.belongsTo(Shipowner, {foreignKey: 'shipOwnerId', targetKey: 'id', as: 'shipOwner'});
 
 CashAccount.hasOne(CashAccount, {foreignKey: 'parentId', targetKey: 'id', as: 'child'});
 CashAccount.belongsTo(CashAccount, {foreignKey: 'parentId', targetKey: 'id', as: 'parent'});
@@ -198,6 +206,7 @@ module.exports = {
     CommissionValue,
     BeneficiaryBalance,
     BoxesBalance,
+    BoxesType,
     BoxesTransaction,
     Payment,
     PaymentType,

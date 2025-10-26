@@ -1,3 +1,4 @@
+const API_URL = 'http://xy269di6.svr.computeservers.oxa.host:3000';
 const express = require('express');
 const mysql = require('mysql2');
 const bodyParser = require('body-parser');
@@ -9,6 +10,8 @@ const app = express();
 const PORT = 3000;
 var morgan = require('morgan');
 var session = require('express-session');
+const Console = require("console");
+const Constants = require("constants");
 var ClusterStore = require('strong-cluster-connect-store')(session);
 //global
 tools = require('./utils/utils');
@@ -136,5 +139,5 @@ app.post('/addUser', async (req, res) => {
 
 // Start Server
 app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+    console.log(`Server is running on ${API_URL}:${PORT}`);
 });

@@ -1,5 +1,5 @@
 const {
-    sequelize, SalePayment, SalesTransaction, PaymentType, Payment, Sale, Shipowner, Address, Civility, Boat, Merchant
+    sequelize, SalePayment, PaymentType, Payment, Sale, Shipowner, Merchant
 } = require('../models');
 
 module.exports = {
@@ -26,6 +26,16 @@ module.exports = {
             return error;
         }
     },
+    sum: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const sum = await SalePayment.sum('value', {where: criteria.where});
+            return sum;
+        } catch (error) {
+            console.error('Error sum SalePayments :', error);
+            return error;
+        }
+    },
     find: async function (criteria) {
         try {
             criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
@@ -36,6 +46,25 @@ module.exports = {
                 order: criteria.sort
             });
             // console.log("=====================>salePayments : " + JSON.stringify(salePayments));
+            return salePayments;
+        } catch (error) {
+            console.error('Error retrieving SalePayments :', error);
+            return error;
+        }
+    },
+    findAll: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const salePayments = await SalePayment.findAll({
+                where: criteria.where,
+                include: [{model: Sale, as: 'sale'}, {model: PaymentType, as: 'paymentType'}, {
+                    model: Payment,
+                    as: 'payment'
+                }],
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
             return salePayments;
         } catch (error) {
             console.error('Error retrieving SalePayments :', error);
@@ -60,12 +89,12 @@ module.exports = {
             // console.log("=====================>salePayments : " + JSON.stringify(salePayments));
             salePayments = JSON.parse(JSON.stringify(salePayments));
             for (var item in salePayments) {
-                if(salePayments[item].sale.shipOwnerId) {
+                if (salePayments[item].sale.shipOwnerId) {
                     let producer = await Shipowner.findByPk(salePayments[item].sale.shipOwnerId);
-                    salePayments[item].producer=producer;
-                }else if(salePayments[item].sale.merchantId) {
+                    salePayments[item].producer = producer;
+                } else if (salePayments[item].sale.merchantId) {
                     let producer = await Merchant.findByPk(salePayments[item].sale.merchantId);
-                    salePayments[item].producer=producer;
+                    salePayments[item].producer = producer;
                 }
             }
             return salePayments;

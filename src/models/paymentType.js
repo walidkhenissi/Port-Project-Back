@@ -31,6 +31,11 @@ module.exports = (sequelize) => {
         order: {
             type: DataTypes.INTEGER,
             allowNull: false
+        },
+        byAddress: {
+            type: DataTypes.BOOLEAN,
+            allowNull: true,
+            default: false
         }
     });
     return PaymentType;

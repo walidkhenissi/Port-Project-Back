@@ -143,7 +143,23 @@ module.exports = {
         }
         number++;
         return number;
-    }
+    },
+    findWithTransactions: async function (criteria) {
+        try {
+            criteria = sequelizeAdapter.checkSequelizeConstraints(criteria);
+            const sales = await Sale.findAll({
+                where: criteria.where,
+                include: [{model: SalesTransaction, as: 'saleTransactions'}],
+                limit: criteria.limit,
+                offset: criteria.skip,
+                order: criteria.sort
+            });
+            return sales;
+        } catch (error) {
+            console.error('Error retrieving sales :', error);
+            return error;
+        }
+    },
 }
 
 
